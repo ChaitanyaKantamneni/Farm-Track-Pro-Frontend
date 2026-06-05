@@ -1,0 +1,17 @@
+{
+  "name": "FarmTrack Pro",
+  "short_name": "FarmTrack",
+  "description": "Poultry farm sales, purchases, staff, salary and reports management.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0f4f8",
+  "theme_color": "#4f9cf9",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
