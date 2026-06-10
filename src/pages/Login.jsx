@@ -49,7 +49,7 @@ function Login() {
         );
       }
       else if (
-        role === "ADMIN"
+        role === "ADMIN" || role === "MANAGER"
       ) {
         navigate(
           "/admin/dashboard"

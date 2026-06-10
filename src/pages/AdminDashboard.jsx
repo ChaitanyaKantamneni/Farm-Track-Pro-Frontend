@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
   ChartNoAxesColumn,
   CreditCard,
+  Egg,
   LayoutDashboard,
   Package,
   Plus,
   ShoppingCart,
   Tag,
   UserRound,
-  Users
+  Users,
+  Warehouse,
+  Shield
 } from "lucide-react";
 import {
   Bar,
@@ -27,7 +30,8 @@ import {
   createResource,
   deleteResource,
   getDashboard,
-  listResource
+  listResource,
+  updateResource
 } from "../services/farmService";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -43,7 +47,8 @@ const sections = [
       { label: "Sales", section: "sales", icon: Tag },
       { label: "Purchases", section: "purchases", icon: ShoppingCart },
       { label: "Payments", section: "payments", icon: CreditCard },
-      { label: "Day Book", section: "daybook", icon: BookOpen }
+      { label: "Day Book", section: "daybook", icon: BookOpen },
+      { label: "Eggs Collection", section: "egg_collections", icon: Egg }
     ]
   },
   { title: "Staff", items: [{ label: "Staff & Salary", section: "staff", icon: Users }] },
@@ -52,10 +57,12 @@ const sections = [
     items: [
       { label: "Customers", section: "customers", icon: UserRound },
       { label: "Vendors", section: "vendors", icon: UserRound },
-      { label: "Items", section: "items", icon: Package }
+      { label: "Items", section: "items", icon: Package },
+      { label: "Sheds", section: "sheds", icon: Warehouse }
     ]
   },
-  { title: "Analytics", items: [{ label: "Reports", section: "reports", icon: ChartNoAxesColumn }] }
+  { title: "Analytics", items: [{ label: "Reports", section: "reports", icon: ChartNoAxesColumn }] },
+  { title: "Settings", items: [{ label: "System Users", section: "users", icon: Shield }] }
 ];
 
 const empty = {
@@ -69,7 +76,10 @@ const empty = {
   staff: [],
   advances: [],
   salaries: [],
-  attendance: []
+  attendance: [],
+  sheds: [],
+  egg_collections: [],
+  users: []
 };
 
 function MetricCard({ label, value, helper, tone }) {
@@ -83,9 +93,10 @@ function MetricCard({ label, value, helper, tone }) {
 }
 
 function Field({ label, children }) {
+  const isRequired = React.Children.toArray(children).some(c => c?.props?.required);
   return (
     <label className="form-field">
-      <span>{label}</span>
+      <span>{label}{isRequired && <span style={{ color: "#e04b46", marginLeft: "4px" }}>*</span>}</span>
       {children}
     </label>
   );
@@ -112,7 +123,36 @@ function AdminDashboard() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const title = sections.flatMap((s) => s.items).find((i) => i.section === active)?.label || "Dashboard";
+  const storedUser = JSON.parse(localStorage.getItem("user") || "null");
+  const userRole = storedUser?.role || "ADMIN";
+
+  const visibleSections = useMemo(() => {
+    if (userRole === "MANAGER") {
+      return [
+        {
+          title: "Transactions",
+          items: sections.find((s) => s.title === "Transactions").items.filter((i) => i.section === "egg_collections")
+        },
+        {
+          title: "Staff",
+          items: sections.find((s) => s.title === "Staff").items
+        },
+        {
+          title: "Master Data",
+          items: sections.find((s) => s.title === "Master Data").items.filter((i) => i.section === "sheds")
+        }
+      ];
+    }
+    return sections;
+  }, [userRole]);
+
+  useEffect(() => {
+    if (userRole === "MANAGER" && !["egg_collections", "staff", "sheds"].includes(active)) {
+      setActive("egg_collections");
+    }
+  }, [userRole, active]);
+
+  const title = visibleSections.flatMap((s) => s.items).find((i) => i.section === active)?.label || "Dashboard";
 
   const load = async () => {
     setLoading(true);
@@ -179,6 +219,11 @@ function AdminDashboard() {
     await load();
   };
 
+  const update = async (resource, id, payload) => {
+    await updateResource(resource, id, normalizePayload(payload));
+    await load();
+  };
+
   const remove = async (resource, id) => {
     if (!confirm("Delete this record?")) return;
     await deleteResource(resource, id);
@@ -190,7 +235,7 @@ function AdminDashboard() {
       title={title}
       activeSection={active}
       onSectionChange={setActive}
-      sections={sections}
+      sections={visibleSections}
     >
       {loading ? <section className="panel loading-panel">Loading farm workspace...</section> : null}
       {!loading && active === "dashboard" && (
@@ -205,11 +250,14 @@ function AdminDashboard() {
       {!loading && active === "purchases" && <PurchasesView data={data} save={save} remove={remove} />}
       {!loading && active === "payments" && <PaymentsView data={data} save={save} remove={remove} />}
       {!loading && active === "daybook" && <DaybookView data={data} save={save} remove={remove} />}
-      {!loading && active === "staff" && <StaffView data={data} save={save} remove={remove} />}
-      {!loading && active === "customers" && <MasterView title="Customers" resource="customers" records={data.customers} save={save} remove={remove} />}
-      {!loading && active === "vendors" && <MasterView title="Vendors" resource="vendors" records={data.vendors} save={save} remove={remove} />}
-      {!loading && active === "items" && <ItemsView data={data} save={save} remove={remove} />}
+      {!loading && active === "egg_collections" && <EggCollectionsView data={data} save={save} remove={remove} />}
+      {!loading && active === "staff" && <StaffView data={data} save={save} remove={remove} userRole={userRole} />}
+      {!loading && active === "customers" && <MasterView title="Customers" resource="customers" records={data.customers} save={save} remove={remove} update={update} />}
+      {!loading && active === "vendors" && <MasterView title="Vendors" resource="vendors" records={data.vendors} save={save} remove={remove} update={update} />}
+      {!loading && active === "items" && <ItemsView data={data} save={save} remove={remove} update={update} />}
+      {!loading && active === "sheds" && <ShedsView data={data} save={save} remove={remove} userRole={userRole} />}
       {!loading && active === "reports" && <ReportsView totals={totals} chartData={chartData} data={data} />}
+      {!loading && active === "users" && <SystemUsersView data={data} save={save} remove={remove} />}
     </AppShell>
   );
 }
@@ -228,7 +276,8 @@ function normalizePayload(payload) {
     "present_days",
     "gross",
     "advance_deducted",
-    "net"
+    "net",
+    "capacity"
   ]);
 
   return Object.fromEntries(
@@ -303,14 +352,14 @@ function SalesView({ data, save, remove }) {
   const total = num(form.qty) * num(form.price);
   return (
     <CrudPanel title="New Sale" button="Save Sale" onSubmit={() => save("sales", { ...form, customer_name: customer?.name, item_name: item?.name, unit: item?.unit, total, balance: total - num(form.paid) })}>
-      <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-      <Field label="Customer"><select value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: e.target.value })}><option value="">Select</option>{data.customers.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
-      <Field label="Item"><select value={form.item_id} onChange={(e) => { const it = data.items.find((x) => String(x.id) === e.target.value); setForm({ ...form, item_id: e.target.value, price: it?.price || "" }); }}><option value="">Select</option>{data.items.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
-      <Field label="Qty"><input value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} /></Field>
-      <Field label="Price"><input value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
-      <Field label="Paid"><input value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} /></Field>
-      <Field label="Total"><input readOnly value={money(total)} /></Field>
-      <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+      <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></Field>
+      <Field label="Customer"><select value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: e.target.value })} required><option value="">Select Customer</option>{data.customers.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
+      <Field label="Item"><select value={form.item_id} onChange={(e) => { const it = data.items.find((x) => String(x.id) === e.target.value); setForm({ ...form, item_id: e.target.value, price: it?.price || "" }); }} required><option value="">Select Item</option>{data.items.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
+      <Field label="Qty"><input type="number" min="0" step="any" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} placeholder="Quantity" required /></Field>
+      <Field label="Price"><input type="number" min="0" step="any" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="Price" required /></Field>
+      <Field label="Paid"><input type="number" min="0" step="any" value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} placeholder="Paid" required /></Field>
+      <Field label="Total"><input readOnly value={money(total)} placeholder="Total" /></Field>
+      <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes" /></Field>
       <Records
         cols={["Date", "Customer", "Item", "Qty", "Total", "Paid", "Balance", ""]}
         rows={data.sales.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.customer_name}</td><td>{x.item_name}</td><td>{x.qty} {x.unit}</td><td>{money(x.total)}</td><td>{money(x.paid)}</td><td>{money(x.balance)}</td><td><button className="btn btn-danger" onClick={() => remove("sales", x.id)}>Delete</button></td></tr>)}
@@ -326,14 +375,14 @@ function PurchasesView({ data, save, remove }) {
   const cost = num(form.qty) * num(form.price);
   return (
     <CrudPanel title="New Purchase" button="Save Purchase" onSubmit={() => save("purchases", { ...form, vendor_name: vendor?.name, item_name: item?.name, unit: item?.unit, cost, balance: cost - num(form.paid) })}>
-      <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-      <Field label="Vendor"><select value={form.vendor_id} onChange={(e) => setForm({ ...form, vendor_id: e.target.value })}><option value="">Select</option>{data.vendors.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
-      <Field label="Item"><select value={form.item_id} onChange={(e) => { const it = data.items.find((x) => String(x.id) === e.target.value); setForm({ ...form, item_id: e.target.value, price: it?.price || "" }); }}><option value="">Select</option>{data.items.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
-      <Field label="Qty"><input value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} /></Field>
-      <Field label="Price"><input value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
-      <Field label="Paid"><input value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} /></Field>
-      <Field label="Cost"><input readOnly value={money(cost)} /></Field>
-      <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+      <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></Field>
+      <Field label="Vendor"><select value={form.vendor_id} onChange={(e) => setForm({ ...form, vendor_id: e.target.value })} required><option value="">Select Vendor</option>{data.vendors.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
+      <Field label="Item"><select value={form.item_id} onChange={(e) => { const it = data.items.find((x) => String(x.id) === e.target.value); setForm({ ...form, item_id: e.target.value, price: it?.price || "" }); }} required><option value="">Select Item</option>{data.items.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
+      <Field label="Qty"><input type="number" min="0" step="any" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} placeholder="Quantity" required /></Field>
+      <Field label="Price"><input type="number" min="0" step="any" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="Price" required /></Field>
+      <Field label="Paid"><input type="number" min="0" step="any" value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} placeholder="Paid" required /></Field>
+      <Field label="Cost"><input readOnly value={money(cost)} placeholder="Cost" /></Field>
+      <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes" /></Field>
       <Records cols={["Date", "Vendor", "Item", "Qty", "Cost", "Paid", "Balance", ""]} rows={data.purchases.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.vendor_name}</td><td>{x.item_name}</td><td>{x.qty} {x.unit}</td><td>{money(x.cost)}</td><td>{money(x.paid)}</td><td>{money(x.balance)}</td><td><button className="btn btn-danger" onClick={() => remove("purchases", x.id)}>Delete</button></td></tr>)} />
     </CrudPanel>
   );
@@ -345,11 +394,11 @@ function PaymentsView({ data, save, remove }) {
   const ref = refs.find((x) => String(x.id) === String(form.ref_id));
   return (
     <CrudPanel title="Record Payment" button="Save Payment" onSubmit={() => save("payments", { ...form, ref_name: ref?.customer_name || ref?.vendor_name })}>
-      <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-      <Field label="Type"><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, ref_id: "" })}><option value="sale">Customer Payment</option><option value="purchase">Vendor Payment</option></select></Field>
-      <Field label="Pending Bill"><select value={form.ref_id} onChange={(e) => setForm({ ...form, ref_id: e.target.value })}><option value="">Select</option>{refs.map((x) => <option value={x.id} key={x.id}>{x.customer_name || x.vendor_name} · {money(x.balance)}</option>)}</select></Field>
-      <Field label="Amount"><input value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></Field>
-      <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+      <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></Field>
+      <Field label="Type"><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, ref_id: "" })} required><option value="sale">Customer Payment</option><option value="purchase">Vendor Payment</option></select></Field>
+      <Field label="Pending Bill"><select value={form.ref_id} onChange={(e) => setForm({ ...form, ref_id: e.target.value })} required><option value="">Select Bill</option>{refs.map((x) => <option value={x.id} key={x.id}>{x.customer_name || x.vendor_name} · {money(x.balance)}</option>)}</select></Field>
+      <Field label="Amount"><input type="number" min="0" step="any" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="Amount" required /></Field>
+      <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes" /></Field>
       <Records cols={["Date", "Type", "Name", "Amount", "Notes", ""]} rows={data.payments.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.type}</td><td>{x.ref_name}</td><td>{money(x.amount)}</td><td>{x.notes}</td><td><button className="btn btn-danger" onClick={() => remove("payments", x.id)}>Delete</button></td></tr>)} />
     </CrudPanel>
   );
@@ -359,17 +408,17 @@ function DaybookView({ data, save, remove }) {
   const [form, setForm] = useState({ date: today(), kind: "expense", category: "", amount: "", notes: "" });
   return (
     <CrudPanel title="Day Book Entry" button="Save Entry" onSubmit={() => save("daybook", form)}>
-      <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-      <Field label="Kind"><select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}><option value="income">Income</option><option value="expense">Expense</option></select></Field>
-      <Field label="Category"><input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="Transport, medicine, misc..." /></Field>
-      <Field label="Amount"><input value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></Field>
-      <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+      <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></Field>
+      <Field label="Kind"><select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} required><option value="income">Income</option><option value="expense">Expense</option></select></Field>
+      <Field label="Category"><input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="Transport, medicine, misc..." required /></Field>
+      <Field label="Amount"><input type="number" min="0" step="any" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="Amount" required /></Field>
+      <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes" /></Field>
       <Records cols={["Date", "Kind", "Category", "Amount", "Notes", ""]} rows={data.daybook.map((x) => <tr key={x.id}><td>{x.date}</td><td><span className={`badge ${x.kind === "income" ? "badge-green" : "badge-red"}`}>{x.kind}</span></td><td>{x.category}</td><td>{money(x.amount)}</td><td>{x.notes}</td><td><button className="btn btn-danger" onClick={() => remove("daybook", x.id)}>Delete</button></td></tr>)} />
     </CrudPanel>
   );
 }
 
-function StaffView({ data, save, remove }) {
+function StaffView({ data, save, remove, userRole }) {
   const [staff, setStaff] = useState({ name: "", phone: "", role_title: "", salary: "", join_date: today(), status: "ACTIVE" });
   const [attendance, setAttendance] = useState({ staff_id: "", date: today(), status: "PRESENT", work_days: "1", notes: "" });
   const [advance, setAdvance] = useState({ staff_id: "", date: today(), amount: "", notes: "" });
@@ -404,69 +453,134 @@ function StaffView({ data, save, remove }) {
 
   return (
     <>
-      <CrudPanel title="Staff Member" button="Add Staff" onSubmit={() => save("staff", staff)}>
-        <Field label="Name"><input value={staff.name} onChange={(e) => setStaff({ ...staff, name: e.target.value })} /></Field>
-        <Field label="Phone"><input value={staff.phone} onChange={(e) => setStaff({ ...staff, phone: e.target.value })} /></Field>
-        <Field label="Role"><input value={staff.role_title} onChange={(e) => setStaff({ ...staff, role_title: e.target.value })} /></Field>
-        <Field label="Salary"><input value={staff.salary} onChange={(e) => setStaff({ ...staff, salary: e.target.value })} /></Field>
-        <Field label="Join Date"><input type="date" value={staff.join_date} onChange={(e) => setStaff({ ...staff, join_date: e.target.value })} /></Field>
-      </CrudPanel>
+      {userRole !== "MANAGER" && (
+        <CrudPanel title="Staff Member" button="Add Staff" onSubmit={() => save("staff", staff)}>
+          <Field label="Name"><input value={staff.name} onChange={(e) => setStaff({ ...staff, name: e.target.value })} placeholder="Full name" required /></Field>
+          <Field label="Phone"><input type="tel" pattern="[0-9]{10}" title="10-digit phone number" value={staff.phone} onChange={(e) => setStaff({ ...staff, phone: e.target.value })} placeholder="Phone number" required /></Field>
+          <Field label="Role"><input value={staff.role_title} onChange={(e) => setStaff({ ...staff, role_title: e.target.value })} placeholder="Job title" required /></Field>
+          <Field label="Salary"><input type="number" min="0" step="any" value={staff.salary} onChange={(e) => setStaff({ ...staff, salary: e.target.value })} placeholder="Monthly salary" required /></Field>
+          <Field label="Join Date"><input type="date" value={staff.join_date} onChange={(e) => setStaff({ ...staff, join_date: e.target.value })} required /></Field>
+        </CrudPanel>
+      )}
       <CrudPanel title="Attendance" button="Mark Attendance" onSubmit={() => save("attendance", { ...attendance, staff_name: attMember?.name })}>
         <StaffSelect data={data.staff} value={attendance.staff_id} onChange={(v) => setAttendance({ ...attendance, staff_id: v })} />
-        <Field label="Date"><input type="date" value={attendance.date} onChange={(e) => setAttendance({ ...attendance, date: e.target.value })} /></Field>
-        <Field label="Status"><select value={attendance.status} onChange={(e) => setAttendance({ ...attendance, status: e.target.value, work_days: e.target.value === "HALF_DAY" ? "0.5" : e.target.value === "ABSENT" ? "0" : "1" })}><option value="PRESENT">Present</option><option value="HALF_DAY">Half Day</option><option value="ABSENT">Absent</option><option value="PAID_LEAVE">Paid Leave</option></select></Field>
-        <Field label="Working Days"><input value={attendance.work_days} onChange={(e) => setAttendance({ ...attendance, work_days: e.target.value })} /></Field>
-        <Field label="Notes"><input value={attendance.notes} onChange={(e) => setAttendance({ ...attendance, notes: e.target.value })} /></Field>
+        <Field label="Date"><input type="date" value={attendance.date} onChange={(e) => setAttendance({ ...attendance, date: e.target.value })} required /></Field>
+        <Field label="Status"><select value={attendance.status} onChange={(e) => setAttendance({ ...attendance, status: e.target.value, work_days: e.target.value === "HALF_DAY" ? "0.5" : e.target.value === "ABSENT" ? "0" : "1" })} required><option value="PRESENT">Present</option><option value="HALF_DAY">Half Day</option><option value="ABSENT">Absent</option><option value="PAID_LEAVE">Paid Leave</option></select></Field>
+        <Field label="Working Days"><input type="number" step="0.5" min="0" value={attendance.work_days} onChange={(e) => setAttendance({ ...attendance, work_days: e.target.value })} placeholder="Work days" required /></Field>
+        <Field label="Notes"><input value={attendance.notes} onChange={(e) => setAttendance({ ...attendance, notes: e.target.value })} placeholder="Optional notes" /></Field>
       </CrudPanel>
-      <div className="two-column">
-        <CrudPanel title="Advance" button="Record Advance" onSubmit={() => save("advances", { ...advance, staff_name: advMember?.name })}>
-          <StaffSelect data={data.staff} value={advance.staff_id} onChange={(v) => setAdvance({ ...advance, staff_id: v })} />
-          <Field label="Date"><input type="date" value={advance.date} onChange={(e) => setAdvance({ ...advance, date: e.target.value })} /></Field>
-          <Field label="Amount"><input value={advance.amount} onChange={(e) => setAdvance({ ...advance, amount: e.target.value })} /></Field>
-          <Field label="Notes"><input value={advance.notes} onChange={(e) => setAdvance({ ...advance, notes: e.target.value })} /></Field>
-        </CrudPanel>
-        <CrudPanel title="Salary Payment" button="Pay Salary" onSubmit={() => save("salaries", { ...salary, staff_name: staffMember?.name, gross: salary.gross || staffMember?.salary })}>
-          <StaffSelect data={data.staff} value={salary.staff_id} onChange={(v) => updateSalaryStaff(v)} />
-          <Field label="Month"><input type="month" value={salary.month} onChange={(e) => updateSalaryStaff(salary.staff_id, e.target.value)} /></Field>
-          <Field label="Working Days"><input value={salary.work_days} onChange={(e) => setSalary({ ...salary, work_days: e.target.value })} /></Field>
-          <Field label="Present Days"><input value={salary.present_days} onChange={(e) => setSalary({ ...salary, present_days: e.target.value })} /></Field>
-          <Field label="Gross"><input value={salary.gross} onChange={(e) => setSalary({ ...salary, gross: e.target.value })} /></Field>
-          <Field label="Advance Deducted"><input value={salary.advance_deducted} onChange={(e) => setSalary({ ...salary, advance_deducted: e.target.value })} /></Field>
-          <Field label="Net"><input readOnly value={money(num(salary.gross) - num(salary.advance_deducted))} /></Field>
-        </CrudPanel>
-      </div>
-      <Records cols={["Name", "Role", "Phone", "Salary", "Status", ""]} rows={data.staff.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.role_title}</td><td>{x.phone}</td><td>{money(x.salary)}</td><td><span className="badge badge-green">{x.status}</span></td><td><button className="btn btn-danger" onClick={() => remove("staff", x.id)}>Delete</button></td></tr>)} />
-      <Records cols={["Date", "Staff", "Status", "Working Days", "Notes", ""]} rows={data.attendance.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.staff_name}</td><td><span className={x.status === "ABSENT" ? "badge badge-red" : "badge badge-green"}>{x.status?.replace("_", " ")}</span></td><td>{x.work_days}</td><td>{x.notes}</td><td><button className="btn btn-danger" onClick={() => remove("attendance", x.id)}>Delete</button></td></tr>)} />
-      <Records cols={["Date", "Staff", "Month", "Days", "Gross", "Deducted", "Net", ""]} rows={data.salaries.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.staff_name}</td><td>{x.month}</td><td>{x.present_days}/{x.work_days}</td><td>{money(x.gross)}</td><td>{money(x.advance_deducted)}</td><td>{money(x.net)}</td><td><button className="btn btn-danger" onClick={() => remove("salaries", x.id)}>Delete</button></td></tr>)} />
+      {userRole !== "MANAGER" && (
+        <div className="two-column">
+          <CrudPanel title="Advance" button="Record Advance" onSubmit={() => save("advances", { ...advance, staff_name: advMember?.name })}>
+            <StaffSelect data={data.staff} value={advance.staff_id} onChange={(v) => setAdvance({ ...advance, staff_id: v })} />
+            <Field label="Date"><input type="date" value={advance.date} onChange={(e) => setAdvance({ ...advance, date: e.target.value })} required /></Field>
+            <Field label="Amount"><input type="number" min="0" step="any" value={advance.amount} onChange={(e) => setAdvance({ ...advance, amount: e.target.value })} placeholder="Amount" required /></Field>
+            <Field label="Notes"><input value={advance.notes} onChange={(e) => setAdvance({ ...advance, notes: e.target.value })} placeholder="Optional notes" /></Field>
+          </CrudPanel>
+          <CrudPanel title="Salary Payment" button="Pay Salary" onSubmit={() => save("salaries", { ...salary, staff_name: staffMember?.name, gross: salary.gross || staffMember?.salary })}>
+            <StaffSelect data={data.staff} value={salary.staff_id} onChange={(v) => updateSalaryStaff(v)} />
+            <Field label="Month"><input type="month" value={salary.month} onChange={(e) => updateSalaryStaff(salary.staff_id, e.target.value)} required /></Field>
+            <Field label="Working Days"><input type="number" step="0.5" min="0" value={salary.work_days} onChange={(e) => setSalary({ ...salary, work_days: e.target.value })} placeholder="Work days" required /></Field>
+            <Field label="Present Days"><input type="number" step="0.5" min="0" value={salary.present_days} onChange={(e) => setSalary({ ...salary, present_days: e.target.value })} placeholder="Present days" required /></Field>
+            <Field label="Gross"><input type="number" min="0" step="any" value={salary.gross} onChange={(e) => setSalary({ ...salary, gross: e.target.value })} placeholder="Gross salary" required /></Field>
+            <Field label="Advance Deducted"><input type="number" min="0" step="any" value={salary.advance_deducted} onChange={(e) => setSalary({ ...salary, advance_deducted: e.target.value })} placeholder="Deductions" required /></Field>
+            <Field label="Net"><input readOnly value={money(num(salary.gross) - num(salary.advance_deducted))} placeholder="Net salary" /></Field>
+          </CrudPanel>
+        </div>
+      )}
+      {userRole !== "MANAGER" && <Records cols={["Name", "Role", "Phone", "Salary", "Status", ""]} rows={data.staff.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.role_title}</td><td>{x.phone}</td><td>{money(x.salary)}</td><td><span className="badge badge-green">{x.status}</span></td><td><button className="btn btn-danger" onClick={() => remove("staff", x.id)}>Delete</button></td></tr>)} />}
+      <Records cols={userRole === "MANAGER" ? ["Date", "Staff", "Status", "Working Days", "Notes"] : ["Date", "Staff", "Status", "Working Days", "Notes", ""]} rows={data.attendance.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.staff_name}</td><td><span className={x.status === "ABSENT" ? "badge badge-red" : "badge badge-green"}>{x.status?.replace("_", " ")}</span></td><td>{x.work_days}</td><td>{x.notes}</td>{userRole !== "MANAGER" && <td><button className="btn btn-danger" onClick={() => remove("attendance", x.id)}>Delete</button></td>}</tr>)} />
+      {userRole !== "MANAGER" && <Records cols={["Date", "Staff", "Month", "Days", "Gross", "Deducted", "Net", ""]} rows={data.salaries.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.staff_name}</td><td>{x.month}</td><td>{x.present_days}/{x.work_days}</td><td>{money(x.gross)}</td><td>{money(x.advance_deducted)}</td><td>{money(x.net)}</td><td><button className="btn btn-danger" onClick={() => remove("salaries", x.id)}>Delete</button></td></tr>)} />}
     </>
   );
 }
 
 function StaffSelect({ data, value, onChange }) {
-  return <Field label="Staff"><select value={value} onChange={(e) => onChange(e.target.value)}><option value="">Select</option>{data.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>;
+  return <Field label="Staff"><select value={value} onChange={(e) => onChange(e.target.value)} required><option value="">Select Staff</option>{data.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>;
 }
 
-function MasterView({ title, resource, records, save, remove }) {
+function MasterView({ title, resource, records, save, remove, update }) {
   const [form, setForm] = useState({ name: "", phone: "", email: "", address: "" });
+  const [editId, setEditId] = useState(null);
+
+  const handleSubmit = async () => {
+    if (editId) {
+      await update(resource, editId, form);
+      setEditId(null);
+    } else {
+      await save(resource, form);
+    }
+    setForm({ name: "", phone: "", email: "", address: "" });
+  };
+
+  const handleEdit = (record) => {
+    setEditId(record.id);
+    setForm({ name: record.name, phone: record.phone || "", email: record.email || "", address: record.address || "" });
+  };
+
   return (
-    <CrudPanel title={`New ${title.slice(0, -1)}`} button={`Save ${title.slice(0, -1)}`} onSubmit={() => save(resource, form)}>
-      <Field label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-      <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
-      <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-      <Field label="Address"><input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></Field>
-      <Records cols={["Name", "Phone", "Email", "Address", ""]} rows={records.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.phone}</td><td>{x.email}</td><td>{x.address}</td><td><button className="btn btn-danger" onClick={() => remove(resource, x.id)}>Delete</button></td></tr>)} />
+    <CrudPanel title={editId ? `Edit ${title.slice(0, -1)}` : `New ${title.slice(0, -1)}`} button={editId ? `Update ${title.slice(0, -1)}` : `Save ${title.slice(0, -1)}`} onSubmit={handleSubmit}>
+      <Field label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Name" required /></Field>
+      <Field label="Phone"><input type="tel" pattern="[0-9]{10}" title="10-digit phone number" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Phone number" /></Field>
+      <Field label="Email"><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email address" /></Field>
+      <Field label="Address"><input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Address" /></Field>
+      {editId && <Field label="Actions"><button type="button" className="btn" onClick={() => { setEditId(null); setForm({ name: "", phone: "", email: "", address: "" }); }}>Cancel Edit</button></Field>}
+      <Records cols={["Name", "Phone", "Email", "Address", ""]} rows={records.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.phone}</td><td>{x.email}</td><td>{x.address}</td><td><div style={{display:'flex',gap:'0.5rem'}}><button className="btn" onClick={() => handleEdit(x)}>Edit</button><button className="btn btn-danger" onClick={() => remove(resource, x.id)}>Delete</button></div></td></tr>)} />
     </CrudPanel>
   );
 }
 
-function ItemsView({ data, save, remove }) {
+function ItemsView({ data, save, remove, update }) {
   const [form, setForm] = useState({ name: "", unit: "kg", price: "" });
+  const [editId, setEditId] = useState(null);
+
+  const handleSubmit = async () => {
+    if (editId) {
+      await update("items", editId, form);
+      setEditId(null);
+    } else {
+      await save("items", form);
+    }
+    setForm({ name: "", unit: "kg", price: "" });
+  };
+
+  const handleEdit = (record) => {
+    setEditId(record.id);
+    setForm({ name: record.name, unit: record.unit, price: record.price });
+  };
+
   return (
-    <CrudPanel title="New Item" button="Save Item" onSubmit={() => save("items", form)}>
-      <Field label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-      <Field label="Unit"><input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} /></Field>
-      <Field label="Default Price"><input value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
-      <Records cols={["Name", "Unit", "Default Price", ""]} rows={data.items.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.unit}</td><td>{money(x.price)}</td><td><button className="btn btn-danger" onClick={() => remove("items", x.id)}>Delete</button></td></tr>)} />
+    <CrudPanel title={editId ? "Edit Item" : "New Item"} button={editId ? "Update Item" : "Save Item"} onSubmit={handleSubmit}>
+      <Field label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Item name" required /></Field>
+      <Field label="Unit"><input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="e.g. kg, liters, tray" required /></Field>
+      <Field label="Default Price"><input type="number" min="0" step="any" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="Default price" required /></Field>
+      {editId && <Field label="Actions"><button type="button" className="btn" onClick={() => { setEditId(null); setForm({ name: "", unit: "kg", price: "" }); }}>Cancel Edit</button></Field>}
+      <Records cols={["Name", "Unit", "Default Price", ""]} rows={data.items.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.unit}</td><td>{money(x.price)}</td><td><div style={{display:'flex',gap:'0.5rem'}}><button className="btn" onClick={() => handleEdit(x)}>Edit</button><button className="btn btn-danger" onClick={() => remove("items", x.id)}>Delete</button></div></td></tr>)} />
+    </CrudPanel>
+  );
+}
+
+function ShedsView({ data, save, remove, userRole }) {
+  const [form, setForm] = useState({ name: "", capacity: "" });
+  return (
+    <CrudPanel title="New Shed" button="Save Shed" onSubmit={() => save("sheds", form)}>
+      <Field label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Shed name" required /></Field>
+      <Field label="Capacity"><input type="number" min="0" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} placeholder="Capacity" required /></Field>
+      <Records cols={userRole === "MANAGER" ? ["Name", "Capacity"] : ["Name", "Capacity", ""]} rows={data.sheds.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.capacity}</td>{userRole !== "MANAGER" && <td><button className="btn btn-danger" onClick={() => remove("sheds", x.id)}>Delete</button></td>}</tr>)} />
+    </CrudPanel>
+  );
+}
+
+function EggCollectionsView({ data, save, remove }) {
+  const [form, setForm] = useState({ date: today(), shed_id: "", qty: "", notes: "" });
+  const shed = data.sheds.find((x) => String(x.id) === String(form.shed_id));
+  return (
+    <CrudPanel title="New Eggs Collection" button="Save Collection" onSubmit={() => save("egg_collections", { ...form, shed_name: shed?.name })}>
+      <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></Field>
+      <Field label="Shed"><select value={form.shed_id} onChange={(e) => setForm({ ...form, shed_id: e.target.value })} required><option value="">Select Shed</option>{data.sheds.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
+      <Field label="Quantity"><input type="number" min="0" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} placeholder="Eggs collected" required /></Field>
+      <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes" /></Field>
+      <Records cols={["Date", "Shed", "Quantity", "Notes", ""]} rows={data.egg_collections.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.shed_name}</td><td>{x.qty}</td><td>{x.notes}</td><td><button className="btn btn-danger" onClick={() => remove("egg_collections", x.id)}>Delete</button></td></tr>)} />
     </CrudPanel>
   );
 }
@@ -509,8 +623,10 @@ function CrudPanel({ title, button, onSubmit, children }) {
     <>
       <section className="panel form-panel">
         <div className="panel-heading"><h2>{title}</h2><p>Enter the details and save the record.</p></div>
-        <div className="erp-form-grid">{fields}</div>
-        <button className="primary-btn" type="button" onClick={onSubmit}><Plus size={17} />{button}</button>
+        <form onSubmit={(e) => { e.preventDefault(); onSubmit(); }}>
+          <div className="erp-form-grid">{fields}</div>
+          <button className="primary-btn" type="submit"><Plus size={17} />{button}</button>
+        </form>
       </section>
       {records}
     </>
@@ -519,6 +635,21 @@ function CrudPanel({ title, button, onSubmit, children }) {
 
 function Records({ cols, rows }) {
   return <section className="panel tenant-list-card records-panel"><Table cols={cols} rows={rows} /></section>;
+}
+
+function SystemUsersView({ data, save, remove }) {
+  const [form, setForm] = useState({ full_name: "", email: "", phone: "", role: "MANAGER", password: "" });
+
+  return (
+    <CrudPanel title="New System User" button="Create User" onSubmit={() => save("users", form)}>
+      <Field label="Full Name"><input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} placeholder="Full name" required /></Field>
+      <Field label="Email"><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email address" required /></Field>
+      <Field label="Phone"><input type="tel" pattern="[0-9]{10}" title="10-digit phone number" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Phone number" /></Field>
+      <Field label="Role"><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} required><option value="MANAGER">Manager</option><option value="ADMIN">Admin</option></select></Field>
+      <Field label="Password"><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Password" required minLength={6} /></Field>
+      <Records cols={["Name", "Email", "Role", ""]} rows={data.users.map((x) => <tr key={x.id}><td>{x.full_name}</td><td>{x.email}</td><td><span className="badge badge-green">{x.role}</span></td><td><button className="btn btn-danger" onClick={() => remove("users", x.id)}>Revoke</button></td></tr>)} />
+    </CrudPanel>
+  );
 }
 
 export default AdminDashboard;

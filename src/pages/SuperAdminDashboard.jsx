@@ -19,14 +19,14 @@ const sections = [
       { label: "Tenant Management", to: "/tenants", icon: Store }
     ]
   },
-  {
-    title: "Platform",
-    items: [
-      { label: "Subscriptions", section: "subscriptions", icon: WalletCards },
-      { label: "Billing", section: "billing", icon: BadgeIndianRupee },
-      { label: "Reports", section: "reports", icon: ChartNoAxesColumn }
-    ]
-  }
+  // {
+  //   title: "Platform",
+  //   items: [
+  //     { label: "Subscriptions", section: "subscriptions", icon: WalletCards },
+  //     { label: "Billing", section: "billing", icon: BadgeIndianRupee },
+  //     { label: "Reports", section: "reports", icon: ChartNoAxesColumn }
+  //   ]
+  // }
 ];
 
 function SuperAdminDashboard() {
