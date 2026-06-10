@@ -189,7 +189,8 @@ function AppShell({
     customSections || (variant === "super" ? superAdminSections : adminSections);
 
   const roleLabel =
-    variant === "super" ? "Super Admin" : "Manager";
+    storedUser?.role === "SUPER_ADMIN" ? "Super Admin" : 
+    storedUser?.role === "MANAGER" ? "Manager" : "Admin";
 
   const signOut = () => {
     logout();
@@ -259,7 +260,7 @@ function AppShell({
             </span>
             <span className="date-pill">
               <CalendarDays size={14} />
-              Tue, 2 Jun, 2026
+              {new Date().toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
             </span>
           </div>
         </header>
