@@ -31,7 +31,14 @@ import {
   deleteResource,
   getDashboard,
   listResource,
-  updateResource
+  updateResource,
+  listDisposals,
+  createDisposal,
+  updateDisposal,
+  deleteDisposal,
+  restoreDisposal,
+  getSettings,
+  updateSettings
 } from "../services/farmService";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -48,7 +55,8 @@ const sections = [
       { label: "Purchases", section: "purchases", icon: ShoppingCart },
       { label: "Payments", section: "payments", icon: CreditCard },
       { label: "Day Book", section: "daybook", icon: BookOpen },
-      { label: "Eggs Collection", section: "egg_collections", icon: Egg }
+      { label: "Eggs Collection", section: "egg_collections", icon: Egg },
+      { label: "Disposed Inventory", section: "disposed_inventory", icon: Package }
     ]
   },
   { title: "Staff", items: [{ label: "Staff & Salary", section: "staff", icon: Users }] },
@@ -61,8 +69,15 @@ const sections = [
       { label: "Sheds", section: "sheds", icon: Warehouse }
     ]
   },
-  { title: "Analytics", items: [{ label: "Reports", section: "reports", icon: ChartNoAxesColumn }] },
-  { title: "Settings", items: [{ label: "System Users", section: "users", icon: Shield }] }
+  {
+    title: "Analytics",
+    items: [
+      { label: "Reports", section: "reports", icon: ChartNoAxesColumn },
+      { label: "Eggs Collection", section: "egg_reports", icon: Egg },
+      { label: "Disposed Inventory", section: "disposal_reports", icon: Package }
+    ]
+  },
+  { title: "Settings", items: [{ label: "App Settings", section: "settings", icon: Shield }, { label: "System Users", section: "users", icon: Shield }] }
 ];
 
 const empty = {
@@ -79,7 +94,9 @@ const empty = {
   attendance: [],
   sheds: [],
   egg_collections: [],
-  users: []
+  users: [],
+  disposals: [],
+  settings: { standard_egg_cost: 0 }
 };
 
 function MetricCard({ label, value, helper, tone }) {
@@ -131,7 +148,7 @@ function AdminDashboard() {
       return [
         {
           title: "Transactions",
-          items: sections.find((s) => s.title === "Transactions").items.filter((i) => i.section === "egg_collections")
+          items: sections.find((s) => s.title === "Transactions").items.filter((i) => ["egg_collections", "disposed_inventory"].includes(i.section))
         },
         {
           title: "Staff",
@@ -147,7 +164,7 @@ function AdminDashboard() {
   }, [userRole]);
 
   useEffect(() => {
-    if (userRole === "MANAGER" && !["egg_collections", "staff", "sheds"].includes(active)) {
+    if (userRole === "MANAGER" && !["egg_collections", "staff", "sheds", "disposed_inventory"].includes(active)) {
       setActive("egg_collections");
     }
   }, [userRole, active]);
@@ -156,9 +173,11 @@ function AdminDashboard() {
 
   const load = async () => {
     setLoading(true);
-    const names = Object.keys(empty);
+    const names = Object.keys(empty).filter(x => x !== 'disposals' && x !== 'settings');
     const responses = await Promise.all(names.map((name) => listResource(name)));
-    const next = {};
+    const dispRes = await listDisposals();
+    const setRes = await getSettings();
+    const next = { disposals: dispRes.data, settings: setRes.data };
     names.forEach((name, index) => {
       next[name] = responses[index].data;
     });
@@ -202,7 +221,7 @@ function AdminDashboard() {
         return d.getFullYear() === year && d.getMonth() === index;
       };
       return {
-        month: name,
+        label: name,
         income:
           data.sales.filter((x) => inMonth(x.date)).reduce((s, x) => s + num(x.paid), 0) +
           data.daybook.filter((x) => x.kind === "income" && inMonth(x.date)).reduce((s, x) => s + num(x.amount), 0),
@@ -244,6 +263,7 @@ function AdminDashboard() {
           pending={dashboard?.pendingReceivables || data.sales.filter((x) => num(x.balance) > 0)}
           payables={dashboard?.outstandingPayables || data.purchases.filter((x) => num(x.balance) > 0)}
           chartData={chartData}
+          inventoryLoss={data.disposals?.filter(x => x.status === 'ACTIVE').reduce((s, x) => s + num(x.total_loss), 0) || 0}
         />
       )}
       {!loading && active === "sales" && <SalesView data={data} save={save} remove={remove} />}
@@ -257,6 +277,20 @@ function AdminDashboard() {
       {!loading && active === "items" && <ItemsView data={data} save={save} remove={remove} update={update} />}
       {!loading && active === "sheds" && <ShedsView data={data} save={save} remove={remove} userRole={userRole} />}
       {!loading && active === "reports" && <ReportsView totals={totals} chartData={chartData} data={data} />}
+      {!loading && active === "egg_reports" && <EggReportsView data={data} />}
+      {!loading && active === "disposal_reports" && <DisposalReportsView data={data} />}
+      {!loading && active === "disposed_inventory" && (
+        <DisposedInventoryView 
+          data={data} 
+          saveDisposal={createDisposal} 
+          updateDisposal={updateDisposal} 
+          voidDisposal={deleteDisposal} 
+          restoreDisposal={restoreDisposal} 
+          reload={load} 
+          userRole={userRole}
+        />
+      )}
+      {!loading && active === "settings" && <SettingsView settings={data.settings} updateSettings={updateSettings} reload={load} />}
       {!loading && active === "users" && <SystemUsersView data={data} save={save} remove={remove} />}
     </AppShell>
   );
@@ -288,7 +322,299 @@ function normalizePayload(payload) {
   );
 }
 
-function DashboardView({ totals, pending, payables, chartData }) {
+function SettingsView({ settings, updateSettings, reload }) {
+  const [form, setForm] = useState({ standard_egg_cost: settings?.standard_egg_cost || 0 });
+
+  const handleSave = async () => {
+    try {
+      await updateSettings(form);
+      await reload();
+      alert("Settings saved successfully.");
+    } catch (err) {
+      alert(err.response?.data?.error || "Error saving settings.");
+    }
+  };
+
+  return (
+    <CrudPanel title="App Settings" button="" onSubmit={handleSave}>
+      <div style={{ padding: '20px', maxWidth: '600px' }}>
+        <Field label="Standard Egg Disposal Cost (₹)">
+          <input 
+            type="number" 
+            step="0.01" 
+            min="0" 
+            value={form.standard_egg_cost} 
+            onChange={e => setForm({...form, standard_egg_cost: e.target.value})} 
+            required 
+            style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+          />
+          <p style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>Used to calculate financial loss when disposing eggs.</p>
+        </Field>
+        <button type="submit" className="btn btn-primary" style={{ marginTop: '20px' }}>Save Settings</button>
+      </div>
+    </CrudPanel>
+  );
+}
+
+function DisposedInventoryView({ data, saveDisposal, updateDisposal, voidDisposal, restoreDisposal, reload, userRole }) {
+  const [tab, setTab] = useState('EGG');
+  const [form, setForm] = useState({ disposal_date: today(), disposal_reason: "", quantity: "", notes: "", source_id: "" });
+  
+  // Egg calculations
+  const totalCollected = data.egg_collections.reduce((s, x) => s + num(x.qty), 0);
+  const totalSold = data.sales.filter(x => x.item_name === 'Eggs').reduce((s, x) => s + num(x.qty), 0);
+  const activeEggDisposals = data.disposals.filter(x => x.disposal_type === 'EGG' && x.status === 'ACTIVE');
+  const totalEggDisposed = activeEggDisposals.reduce((s, x) => s + num(x.quantity), 0);
+  const availableEggs = totalCollected - totalSold - totalEggDisposed;
+  const eggLoss = activeEggDisposals.reduce((s, x) => s + num(x.total_loss), 0);
+
+  // Item calculations
+  const activeItemDisposals = data.disposals.filter(x => x.disposal_type === 'PURCHASE_ITEM' && x.status === 'ACTIVE');
+  const totalItemDisposed = activeItemDisposals.reduce((s, x) => s + num(x.quantity), 0);
+  const itemLoss = activeItemDisposals.reduce((s, x) => s + num(x.total_loss), 0);
+  
+  const totalFinancialLoss = eggLoss + itemLoss;
+  const totalTransactions = data.disposals.length;
+
+  const handleSave = async () => {
+    try {
+      const payload = { ...form, disposal_type: tab, item_snapshot_name: tab === 'EGG' ? 'Eggs' : data.purchases.find(p => String(p.id) === String(form.source_id))?.item_name || 'Unknown Item' };
+      await saveDisposal(payload);
+      setForm({ disposal_date: today(), disposal_reason: "", quantity: "", notes: "", source_id: "" });
+      await reload();
+    } catch (err) {
+      alert(err.response?.data?.error || "Error recording disposal.");
+    }
+  };
+
+  const handleAction = async (action, id) => {
+    if (action === 'void' && confirm("Void this disposal record?")) {
+      await voidDisposal(id);
+      await reload();
+    } else if (action === 'restore' && confirm("Restore this disposal record?")) {
+      try {
+        await restoreDisposal(id);
+        await reload();
+      } catch (err) {
+        alert(err.response?.data?.error || "Error restoring disposal.");
+      }
+    }
+  };
+
+  const reasons = tab === 'EGG' ? ['Broken', 'Cracked', 'Spoiled', 'Rejected', 'Quality Issue', 'Other'] : ['Damaged', 'Expired', 'Lost', 'Wastage', 'Quality Issue', 'Other'];
+
+  return (
+    <div>
+      {userRole !== 'MANAGER' && (
+        <section className="metric-grid" style={{ marginBottom: '24px' }}>
+          <MetricCard label="Total Collected (Eggs)" value={totalCollected} tone="blue" />
+          <MetricCard label="Available Stock (Eggs)" value={availableEggs} tone="green" />
+          <MetricCard label="Disposed (Eggs)" value={totalEggDisposed} tone="red" helper={`Loss: ${money(eggLoss)}`} />
+          
+          <MetricCard label="Disposed (Items)" value={totalItemDisposed} tone="red" helper={`Loss: ${money(itemLoss)}`} />
+          <MetricCard label="Total Transactions" value={totalTransactions} tone="purple" />
+          <MetricCard label="Total Financial Loss" value={money(totalFinancialLoss)} tone="red" />
+        </section>
+      )}
+
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+        <button className={`btn ${tab === 'EGG' ? 'btn-primary' : ''}`} onClick={() => setTab('EGG')}>Dispose Eggs</button>
+        <button className={`btn ${tab === 'PURCHASE_ITEM' ? 'btn-primary' : ''}`} onClick={() => setTab('PURCHASE_ITEM')}>Dispose Purchased Items</button>
+      </div>
+
+      <CrudPanel title={`Record ${tab === 'EGG' ? 'Egg' : 'Item'} Disposal`} button="Save Record" onSubmit={handleSave}>
+        <Field label="Date"><input type="date" value={form.disposal_date} onChange={e => setForm({...form, disposal_date: e.target.value})} required /></Field>
+        {tab === 'PURCHASE_ITEM' && (
+          <Field label="Purchase Source">
+            <select value={form.source_id} onChange={e => setForm({...form, source_id: e.target.value})} required>
+              <option value="">Select Purchase Batch</option>
+              {data.purchases.map(p => {
+                const batchDisposed = activeItemDisposals.filter(d => String(d.source_id) === String(p.id)).reduce((s, x) => s + num(x.quantity), 0);
+                const available = num(p.qty) - batchDisposed;
+                return <option key={p.id} value={p.id}>{p.item_name} (Avail: {available} {p.unit}) - {p.date}</option>;
+              })}
+            </select>
+          </Field>
+        )}
+        <Field label="Reason">
+          <select value={form.disposal_reason} onChange={e => setForm({...form, disposal_reason: e.target.value})} required>
+            <option value="">Select Reason</option>
+            {reasons.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </Field>
+        <Field label="Quantity"><input type="number" min="0.01" step="any" value={form.quantity} onChange={e => setForm({...form, quantity: e.target.value})} required /></Field>
+        <Field label="Notes"><input value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} placeholder="Optional notes" /></Field>
+      </CrudPanel>
+
+      <div style={{ marginTop: '24px' }}>
+        <h3>Disposal History</h3>
+        <div className="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Item</th>
+                <th>Qty</th>
+                <th>Unit Cost</th>
+                <th>Loss</th>
+                <th>Reason</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.disposals.map(d => (
+                <tr key={d.id} style={{ opacity: d.status === 'VOID' ? 0.6 : 1 }}>
+                  <td>{d.disposal_number}</td>
+                  <td>{d.disposal_date.slice(0, 10)}</td>
+                  <td>{d.disposal_type}</td>
+                  <td>{d.item_snapshot_name}</td>
+                  <td>{d.quantity} {d.unit || ''}</td>
+                  <td>{money(d.unit_cost)}</td>
+                  <td>{money(d.total_loss)}</td>
+                  <td>{d.disposal_reason}</td>
+                  <td><strong>{d.status}</strong></td>
+                  <td>
+                    {d.status === 'ACTIVE' ? (
+                      <button type="button" className="btn btn-danger" style={{ padding: '4px 8px', fontSize: '12px' }} onClick={() => handleAction('void', d.id)}>Void</button>
+                    ) : (
+                      <button type="button" className="btn btn-primary" style={{ padding: '4px 8px', fontSize: '12px' }} onClick={() => handleAction('restore', d.id)}>Restore</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DisposalReportsView({ data }) {
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+
+  const filteredDisposals = useMemo(() => {
+    return (data.disposals || [])
+      .filter(x => x.status === 'ACTIVE')
+      .filter(x => (!fromDate || x.disposal_date >= fromDate) && (!toDate || x.disposal_date <= toDate));
+  }, [data.disposals, fromDate, toDate]);
+
+  const totals = useMemo(() => {
+    let eggQty = 0;
+    let itemQty = 0;
+    let eggLoss = 0;
+    let itemLoss = 0;
+    filteredDisposals.forEach(d => {
+      if (d.disposal_type === 'EGG') {
+        eggQty += num(d.quantity);
+        eggLoss += num(d.total_loss);
+      } else {
+        itemQty += num(d.quantity);
+        itemLoss += num(d.total_loss);
+      }
+    });
+    return { eggQty, itemQty, eggLoss, itemLoss, totalLoss: eggLoss + itemLoss };
+  }, [filteredDisposals]);
+
+  const topItems = useMemo(() => {
+    const map = {};
+    filteredDisposals.forEach(d => {
+      map[d.item_snapshot_name] ||= { name: d.item_snapshot_name, qty: 0, loss: 0 };
+      map[d.item_snapshot_name].qty += num(d.quantity);
+      map[d.item_snapshot_name].loss += num(d.total_loss);
+    });
+    return Object.values(map).sort((a, b) => b.loss - a.loss);
+  }, [filteredDisposals]);
+
+  const topReasons = useMemo(() => {
+    const map = {};
+    filteredDisposals.forEach(d => {
+      map[d.disposal_reason] ||= { name: d.disposal_reason, qty: 0, loss: 0 };
+      map[d.disposal_reason].qty += num(d.quantity);
+      map[d.disposal_reason].loss += num(d.total_loss);
+    });
+    return Object.values(map).sort((a, b) => b.loss - a.loss);
+  }, [filteredDisposals]);
+
+  const chartData = useMemo(() => {
+    if (filteredDisposals.length === 0) return [];
+    
+    let minDate = "9999-12-31";
+    let maxDate = "0000-01-01";
+    filteredDisposals.forEach(x => {
+      if (x.disposal_date < minDate) minDate = x.disposal_date;
+      if (x.disposal_date > maxDate) maxDate = x.disposal_date;
+    });
+
+    const start = fromDate ? new Date(fromDate) : new Date(minDate);
+    const end = toDate ? new Date(toDate) : new Date(maxDate);
+    const diffDays = Math.abs(end - start) / (1000 * 60 * 60 * 24);
+
+    const map = {};
+    filteredDisposals.forEach(d => {
+      const dateKey = diffDays <= 60 ? d.disposal_date : d.disposal_date.slice(0, 7);
+      map[dateKey] ||= { key: dateKey, loss: 0 };
+      map[dateKey].loss += num(d.total_loss);
+    });
+
+    return Object.values(map).sort((a, b) => a.key.localeCompare(b.key)).map(x => {
+      const d = new Date(x.key + (diffDays <= 60 ? "" : "-01"));
+      return {
+        label: diffDays <= 60 ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        "Financial Loss": x.loss
+      };
+    });
+  }, [filteredDisposals, fromDate, toDate]);
+
+  return (
+    <>
+      <div className="filter-bar" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginBottom: '1.5rem', alignItems: 'center' }}>
+        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>From:</label>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
+        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>To:</label>
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
+      </div>
+
+      <section className="metric-grid">
+        <MetricCard label="Total Loss" value={money(totals.totalLoss)} tone="red" />
+        <MetricCard label="Egg Loss" value={money(totals.eggLoss)} helper={`${totals.eggQty} Eggs Disposed`} tone="amber" />
+        <MetricCard label="Item Loss" value={money(totals.itemLoss)} helper={`${totals.itemQty} Items Disposed`} tone="purple" />
+      </section>
+
+      {chartData.length > 0 && (
+        <section className="panel chart-panel" style={{ height: "350px", marginBottom: "1.5rem" }}>
+          <div className="panel-heading"><h2>Loss Trend</h2></div>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 12 }} dy={10} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 12 }} dx={-10} tickFormatter={(val) => `₹${val}`} />
+              <Tooltip cursor={{ fill: "#f8fafc" }} contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)" }} formatter={(value) => money(value)} />
+              <Bar dataKey="Financial Loss" fill="#e04b46" radius={[4, 4, 0, 0]} maxBarSize={50} />
+            </BarChart>
+          </ResponsiveContainer>
+        </section>
+      )}
+
+      <section className="two-column">
+        <section className="panel tenant-list-card">
+          <div className="panel-heading"><h2>Loss by Item</h2></div>
+          <Table cols={["Item", "Quantity", "Total Loss"]} rows={topItems.map((x) => <tr key={x.name}><td>{x.name}</td><td>{x.qty}</td><td>{money(x.loss)}</td></tr>)} />
+        </section>
+        <section className="panel tenant-list-card">
+          <div className="panel-heading"><h2>Loss by Reason</h2></div>
+          <Table cols={["Reason", "Quantity", "Total Loss"]} rows={topReasons.map((x) => <tr key={x.name}><td>{x.name}</td><td>{x.qty}</td><td>{money(x.loss)}</td></tr>)} />
+        </section>
+      </section>
+    </>
+  );
+}
+
+function DashboardView({ totals, pending, payables, chartData, inventoryLoss }) {
   return (
     <>
       <section className="metric-grid">
@@ -297,7 +623,7 @@ function DashboardView({ totals, pending, payables, chartData }) {
         <MetricCard label="Net Profit" value={money(totals.income - totals.expense)} helper="Income - expenses" tone={totals.income >= totals.expense ? "green" : "red"} />
         <MetricCard label="Receivables" value={money(totals.receivables)} helper="Customers owe you" tone="amber" />
         <MetricCard label="Payables" value={money(totals.payables)} helper="You owe vendors" tone="amber" />
-        <MetricCard label="Salary Paid" value={money(totals.salaryPaid)} helper="All staff, all time" tone="purple" />
+        <MetricCard label="Inventory Loss" value={money(inventoryLoss)} helper="Value of disposed items" tone="red" />
       </section>
       <section className="two-column">
         <Ledger title="Pending Receivables" subtitle="Customers who owe you" rows={pending} nameKey="customer_name" amountKey="balance" tone="amber" />
@@ -332,7 +658,7 @@ function ChartPanel({ chartData }) {
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={chartData}>
             <CartesianGrid stroke="#dfe5ee" strokeOpacity={0.65} />
-            <XAxis dataKey="month" tick={{ fill: "#8b97b0", fontSize: 11 }} axisLine={{ stroke: "#d7dee8" }} tickLine={false} />
+            <XAxis dataKey="label" tick={{ fill: "#8b97b0", fontSize: 11 }} axisLine={{ stroke: "#d7dee8" }} tickLine={false} />
             <YAxis tick={{ fill: "#8b97b0", fontSize: 11 }} axisLine={{ stroke: "#d7dee8" }} tickLine={false} />
             <Tooltip cursor={{ fill: "rgba(79, 156, 249, 0.08)" }} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -502,6 +828,9 @@ function StaffSelect({ data, value, onChange }) {
 function MasterView({ title, resource, records, save, remove, update }) {
   const [form, setForm] = useState({ name: "", phone: "", email: "", address: "" });
   const [editId, setEditId] = useState(null);
+  const [search, setSearch] = useState("");
+
+  const filteredRecords = records.filter(r => r.name?.toLowerCase().includes(search.toLowerCase()));
 
   const handleSubmit = async () => {
     if (editId) {
@@ -525,7 +854,12 @@ function MasterView({ title, resource, records, save, remove, update }) {
       <Field label="Email"><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email address" /></Field>
       <Field label="Address"><input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Address" /></Field>
       {editId && <Field label="Actions"><button type="button" className="btn" onClick={() => { setEditId(null); setForm({ name: "", phone: "", email: "", address: "" }); }}>Cancel Edit</button></Field>}
-      <Records cols={["Name", "Phone", "Email", "Address", ""]} rows={records.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.phone}</td><td>{x.email}</td><td>{x.address}</td><td><div style={{display:'flex',gap:'0.5rem'}}><button className="btn" onClick={() => handleEdit(x)}>Edit</button><button className="btn btn-danger" onClick={() => remove(resource, x.id)}>Delete</button></div></td></tr>)} />
+      
+      <Records 
+        headerRight={<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder={`Search ${title.toLowerCase()}...`} style={{ padding: '0.4rem 0.8rem', border: '1px solid #dfe5ee', borderRadius: '6px', width: '250px' }} />}
+        cols={["Name", "Phone", "Email", "Address", ""]} 
+        rows={filteredRecords.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.phone}</td><td>{x.email}</td><td>{x.address}</td><td><div style={{display:'flex',gap:'0.5rem'}}><button className="btn" onClick={() => handleEdit(x)}>Edit</button><button className="btn btn-danger" onClick={() => remove(resource, x.id)}>Delete</button></div></td></tr>)} 
+      />
     </CrudPanel>
   );
 }
@@ -533,6 +867,9 @@ function MasterView({ title, resource, records, save, remove, update }) {
 function ItemsView({ data, save, remove, update }) {
   const [form, setForm] = useState({ name: "", unit: "kg", price: "" });
   const [editId, setEditId] = useState(null);
+  const [search, setSearch] = useState("");
+
+  const filteredItems = data.items.filter(r => r.name?.toLowerCase().includes(search.toLowerCase()));
 
   const handleSubmit = async () => {
     if (editId) {
@@ -555,7 +892,12 @@ function ItemsView({ data, save, remove, update }) {
       <Field label="Unit"><input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="e.g. kg, liters, tray" required /></Field>
       <Field label="Default Price"><input type="number" min="0" step="any" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="Default price" required /></Field>
       {editId && <Field label="Actions"><button type="button" className="btn" onClick={() => { setEditId(null); setForm({ name: "", unit: "kg", price: "" }); }}>Cancel Edit</button></Field>}
-      <Records cols={["Name", "Unit", "Default Price", ""]} rows={data.items.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.unit}</td><td>{money(x.price)}</td><td><div style={{display:'flex',gap:'0.5rem'}}><button className="btn" onClick={() => handleEdit(x)}>Edit</button><button className="btn btn-danger" onClick={() => remove("items", x.id)}>Delete</button></div></td></tr>)} />
+      
+      <Records 
+        headerRight={<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search items..." style={{ padding: '0.4rem 0.8rem', border: '1px solid #dfe5ee', borderRadius: '6px', width: '250px' }} />}
+        cols={["Name", "Unit", "Default Price", ""]} 
+        rows={filteredItems.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.unit}</td><td>{money(x.price)}</td><td><div style={{display:'flex',gap:'0.5rem'}}><button className="btn" onClick={() => handleEdit(x)}>Edit</button><button className="btn btn-danger" onClick={() => remove("items", x.id)}>Delete</button></div></td></tr>)} 
+      />
     </CrudPanel>
   );
 }
@@ -585,28 +927,96 @@ function EggCollectionsView({ data, save, remove }) {
   );
 }
 
-function ReportsView({ totals, chartData, data }) {
-  const topCustomers = Object.values(data.sales.reduce((acc, row) => {
+function ReportsView({ totals: defaultTotals, chartData, data }) {
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+
+  const filteredSales = useMemo(() => data.sales.filter(x => (!fromDate || x.date >= fromDate) && (!toDate || x.date <= toDate)), [data.sales, fromDate, toDate]);
+  const filteredPurchases = useMemo(() => data.purchases.filter(x => (!fromDate || x.date >= fromDate) && (!toDate || x.date <= toDate)), [data.purchases, fromDate, toDate]);
+  const filteredDaybook = useMemo(() => data.daybook.filter(x => (!fromDate || x.date >= fromDate) && (!toDate || x.date <= toDate)), [data.daybook, fromDate, toDate]);
+
+  const totals = useMemo(() => {
+    if (!fromDate && !toDate) return defaultTotals;
+    const salesPaid = filteredSales.reduce((s, x) => s + num(x.paid), 0);
+    const purchasesPaid = filteredPurchases.reduce((s, x) => s + num(x.paid), 0);
+    const dayIncome = filteredDaybook.filter((d) => d.kind === "income").reduce((s, x) => s + num(x.amount), 0);
+    const dayExpense = filteredDaybook.filter((d) => d.kind === "expense").reduce((s, x) => s + num(x.amount), 0);
+    const income = salesPaid + dayIncome;
+    const expense = purchasesPaid + dayExpense;
+    return {
+      income,
+      expense,
+      profit: income - expense,
+      receivables: filteredSales.reduce((s, x) => s + num(x.balance), 0),
+      payables: filteredPurchases.reduce((s, x) => s + num(x.balance), 0),
+    };
+  }, [filteredSales, filteredPurchases, filteredDaybook, defaultTotals, fromDate, toDate]);
+
+  const topCustomers = Object.values(filteredSales.reduce((acc, row) => {
     acc[row.customer_name] ||= { name: row.customer_name, total: 0, balance: 0 };
     acc[row.customer_name].total += num(row.total);
     acc[row.customer_name].balance += num(row.balance);
     return acc;
   }, {}));
-  const topVendors = Object.values(data.purchases.reduce((acc, row) => {
+  const topVendors = Object.values(filteredPurchases.reduce((acc, row) => {
     acc[row.vendor_name] ||= { name: row.vendor_name, total: 0, balance: 0 };
     acc[row.vendor_name].total += num(row.cost);
     acc[row.vendor_name].balance += num(row.balance);
     return acc;
   }, {}));
+
+  const dynamicChartData = useMemo(() => {
+    if (!fromDate && !toDate) return chartData;
+
+    let minDate = "9999-12-31";
+    let maxDate = "0000-01-01";
+    const checkDate = (d) => { if(d) { if(d < minDate) minDate = d; if(d > maxDate) maxDate = d; } };
+    
+    filteredSales.forEach(x => checkDate(x.date));
+    filteredPurchases.forEach(x => checkDate(x.date));
+
+    const start = fromDate ? new Date(fromDate) : new Date(minDate === "9999-12-31" ? Date.now() : minDate);
+    const end = toDate ? new Date(toDate) : new Date(maxDate === "0000-01-01" ? Date.now() : maxDate);
+    const diffDays = Math.abs(end - start) / (1000 * 60 * 60 * 24);
+
+    const map = {};
+    const add = (date, key, val) => {
+      if (!date) return;
+      const l = diffDays <= 60 ? date : date.slice(0, 7);
+      map[l] ||= { key: l, income: 0, expenses: 0 };
+      map[l][key] += num(val);
+    };
+
+    filteredSales.forEach(x => add(x.date, 'income', x.paid));
+    filteredDaybook.filter(x => x.kind === 'income').forEach(x => add(x.date, 'income', x.amount));
+    filteredPurchases.forEach(x => add(x.date, 'expenses', x.paid));
+    filteredDaybook.filter(x => x.kind === 'expense').forEach(x => add(x.date, 'expenses', x.amount));
+
+    return Object.values(map).sort((a, b) => a.key.localeCompare(b.key)).map(x => {
+       const d = new Date(x.key + (diffDays <= 60 ? "" : "-01"));
+       return {
+         label: diffDays <= 60 ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+         income: x.income,
+         expenses: x.expenses
+       };
+    });
+  }, [filteredSales, filteredPurchases, filteredDaybook, chartData, fromDate, toDate]);
+
   return (
     <>
+      <div className="filter-bar" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginBottom: '1.5rem', alignItems: 'center' }}>
+        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>From:</label>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
+        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>To:</label>
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
+      </div>
       <section className="metric-grid super-grid">
         <MetricCard label="Income" value={money(totals.income)} tone="green" />
         <MetricCard label="Expenses" value={money(totals.expense)} tone="red" />
         <MetricCard label="Profit" value={money(totals.profit)} tone={totals.profit >= 0 ? "green" : "red"} />
         <MetricCard label="Receivables" value={money(totals.receivables)} tone="amber" />
       </section>
-      <ChartPanel chartData={chartData} />
+      <ChartPanel chartData={dynamicChartData} />
       <section className="two-column">
         <section className="panel tenant-list-card"><div className="panel-heading"><h2>Customer Summary</h2></div><Table cols={["Customer", "Total", "Balance"]} rows={topCustomers.map((x) => <tr key={x.name}><td>{x.name}</td><td>{money(x.total)}</td><td>{money(x.balance)}</td></tr>)} /></section>
         <section className="panel tenant-list-card"><div className="panel-heading"><h2>Vendor Summary</h2></div><Table cols={["Vendor", "Total", "Balance"]} rows={topVendors.map((x) => <tr key={x.name}><td>{x.name}</td><td>{money(x.total)}</td><td>{money(x.balance)}</td></tr>)} /></section>
@@ -633,8 +1043,13 @@ function CrudPanel({ title, button, onSubmit, children }) {
   );
 }
 
-function Records({ cols, rows }) {
-  return <section className="panel tenant-list-card records-panel"><Table cols={cols} rows={rows} /></section>;
+function Records({ cols, rows, headerRight }) {
+  return (
+    <section className="panel tenant-list-card records-panel">
+      {headerRight && <div className="panel-heading" style={{ justifyContent: 'flex-end', paddingBottom: '1rem', paddingTop: '1.5rem', paddingRight: '1.5rem' }}>{headerRight}</div>}
+      <Table cols={cols} rows={rows} />
+    </section>
+  );
 }
 
 function SystemUsersView({ data, save, remove }) {
@@ -649,6 +1064,59 @@ function SystemUsersView({ data, save, remove }) {
       <Field label="Password"><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Password" required minLength={6} /></Field>
       <Records cols={["Name", "Email", "Role", ""]} rows={data.users.map((x) => <tr key={x.id}><td>{x.full_name}</td><td>{x.email}</td><td><span className="badge badge-green">{x.role}</span></td><td><button className="btn btn-danger" onClick={() => remove("users", x.id)}>Revoke</button></td></tr>)} />
     </CrudPanel>
+  );
+}
+
+function EggReportsView({ data }) {
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+
+  const filteredEggs = useMemo(() => data.egg_collections.filter(x => (!fromDate || x.date >= fromDate) && (!toDate || x.date <= toDate)), [data.egg_collections, fromDate, toDate]);
+
+  const totalEggs = filteredEggs.reduce((sum, row) => sum + num(row.qty), 0);
+  const shedSummary = Object.values(filteredEggs.reduce((acc, row) => {
+    acc[row.shed_name] ||= { name: row.shed_name || "Unknown Shed", eggs: 0 };
+    acc[row.shed_name].eggs += num(row.qty);
+    return acc;
+  }, {})).sort((a, b) => b.eggs - a.eggs);
+
+  const topShed = shedSummary[0] || { name: "N/A", eggs: 0 };
+
+  const chartData = shedSummary.map(x => ({ name: x.name, eggs: x.eggs }));
+
+  return (
+    <>
+      <div className="filter-bar" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginBottom: '1.5rem', alignItems: 'center' }}>
+        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>From:</label>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
+        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>To:</label>
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
+      </div>
+      <section className="metric-grid super-grid">
+        <MetricCard label="Total Eggs Collected" value={totalEggs} tone="purple" />
+        <MetricCard label="Top Shed" value={topShed.name} helper={`${topShed.eggs} eggs`} tone="green" />
+        <MetricCard label="Total Collections" value={filteredEggs.length} tone="amber" />
+      </section>
+      <section className="panel chart-panel">
+        <div className="panel-heading"><h2>Eggs per Shed</h2></div>
+        <div className="chart-wrap">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData}>
+              <CartesianGrid stroke="#dfe5ee" strokeOpacity={0.65} />
+              <XAxis dataKey="name" tick={{ fill: "#8b97b0", fontSize: 11 }} axisLine={{ stroke: "#d7dee8" }} tickLine={false} />
+              <YAxis tick={{ fill: "#8b97b0", fontSize: 11 }} axisLine={{ stroke: "#d7dee8" }} tickLine={false} />
+              <Tooltip cursor={{ fill: "rgba(79, 156, 249, 0.08)" }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="eggs" name="Eggs Collected" fill="#8884d8" stroke="#6864bd" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+      <section className="panel tenant-list-card">
+        <div className="panel-heading"><h2>Shed Summary</h2></div>
+        <Table cols={["Shed Name", "Total Eggs"]} rows={shedSummary.map(x => <tr key={x.name}><td>{x.name}</td><td>{x.eggs}</td></tr>)} />
+      </section>
+    </>
   );
 }
 

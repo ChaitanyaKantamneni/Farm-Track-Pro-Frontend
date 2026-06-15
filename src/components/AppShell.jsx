@@ -1,4 +1,4 @@
-import { useContext } from "react";
+import { useContext, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   BadgeIndianRupee,
@@ -14,7 +14,11 @@ import {
   Tag,
   UserRound,
   Users,
-  WalletCards
+  WalletCards,
+  Menu,
+  ChevronLeft,
+  ChevronRight,
+  Egg
 } from "lucide-react";
 
 import { AuthContext } from "../context/AuthContext";
@@ -83,7 +87,13 @@ const adminSections = [
     items: [
       {
         label: "Reports",
+        section: "reports",
         icon: ChartNoAxesColumn
+      },
+      {
+        label: "Eggs Collection",
+        section: "egg_reports",
+        icon: Egg
       }
     ]
   }
@@ -139,7 +149,7 @@ function NavItem({
         onClick={() => onSectionChange(item.section)}
       >
         <Icon size={18} />
-        <span>{item.label}</span>
+        <span className="link-text">{item.label}</span>
       </button>
     );
   }
@@ -148,12 +158,13 @@ function NavItem({
     return (
       <NavLink
         to={item.to}
+        onClick={() => { if (onSectionChange) onSectionChange(item.label); }}
         className={({ isActive }) =>
           isActive ? "side-link active" : "side-link"
         }
       >
         <Icon size={18} />
-        <span>{item.label}</span>
+        <span className="link-text">{item.label}</span>
       </NavLink>
     );
   }
@@ -162,9 +173,10 @@ function NavItem({
     <button
       className="side-link side-link-muted"
       type="button"
+      onClick={() => { if (onSectionChange) onSectionChange(item.label); }}
     >
       <Icon size={18} />
-      <span>{item.label}</span>
+      <span className="link-text">{item.label}</span>
     </button>
   );
 }
@@ -178,9 +190,9 @@ function AppShell({
   sections: customSections
 }) {
   const navigate = useNavigate();
-  const {
-    logout
-  } = useContext(AuthContext);
+  const { logout } = useContext(AuthContext);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   const storedUser =
     JSON.parse(localStorage.getItem("user") || "null");
@@ -198,11 +210,12 @@ function AppShell({
   };
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isCollapsed ? 'collapsed' : ''} ${isMobileOpen ? 'mobile-open' : ''}`}>
+      {isMobileOpen && <div className="mobile-overlay" onClick={() => setIsMobileOpen(false)} />}
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <FarmTrackLogo compact={variant !== "super"} />
-          <p>{variant === "super" ? "PLATFORM ACCESS" : "FULL ACCESS"}</p>
+          <FarmTrackLogo collapsed={isCollapsed} compact={variant !== "super"} />
+          <p className="brand-label">{variant === "super" ? "PLATFORM ACCESS" : "FULL ACCESS"}</p>
         </div>
 
         <nav className="side-nav">
@@ -221,7 +234,10 @@ function AppShell({
                       item={item}
                       key={item.label}
                       activeSection={activeSection}
-                      onSectionChange={onSectionChange}
+                      onSectionChange={(s) => {
+                        if (onSectionChange) onSectionChange(s);
+                        setIsMobileOpen(false);
+                      }}
                     />
                   ))
                 }
@@ -246,14 +262,20 @@ function AppShell({
             onClick={signOut}
           >
             <LogOut size={16} />
-            <span>Sign out</span>
+            <span className="link-text">Sign out</span>
           </button>
         </div>
+        <button className="collapse-btn" onClick={() => setIsCollapsed(!isCollapsed)}>
+          {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+        </button>
       </aside>
 
       <main className="workspace">
         <header className="topbar">
-          <h1>{title}</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <button className="mobile-toggle" onClick={() => setIsMobileOpen(true)}><Menu size={22} /></button>
+            <h1>{title}</h1>
+          </div>
           <div className="topbar-actions">
             <span className="role-pill">
               {roleLabel}

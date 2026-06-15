@@ -88,6 +88,11 @@ button {
   height: 100vh;
   background: var(--bg);
   overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.app-shell.collapsed {
+  --sidebar-width: 80px;
 }
 
 .sidebar {
@@ -101,7 +106,8 @@ button {
   height: 100vh;
   background: var(--surface);
   border-right: 1px solid var(--line);
-  overflow: hidden;
+  overflow: visible;
+  transition: transform 0.3s ease, width 0.3s ease;
 }
 
 .sidebar-brand {
@@ -117,6 +123,19 @@ button {
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-shell.collapsed .sidebar-brand {
+  padding: 34px 0 26px;
+  text-align: center;
+}
+
+.app-shell.collapsed .brand-label,
+.app-shell.collapsed .side-heading {
+  display: none;
 }
 
 .side-nav {
@@ -124,6 +143,14 @@ button {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 24px 10px;
+}
+
+.app-shell.collapsed .side-nav::-webkit-scrollbar {
+  display: none;
+}
+.app-shell.collapsed .side-nav {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
 }
 
 .side-section + .side-section {
@@ -148,6 +175,17 @@ button {
   text-decoration: none;
   font-size: 14px;
   font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.app-shell.collapsed .side-link {
+  justify-content: center;
+  padding: 0;
+}
+
+.app-shell.collapsed .link-text {
+  display: none;
 }
 
 .side-link svg {
@@ -219,16 +257,80 @@ button {
   background: transparent;
   color: #586683;
   font-size: 13px;
+  width: 100%;
+}
+
+.app-shell.collapsed .signout {
+  justify-content: center;
+}
+
+.app-shell.collapsed .user-card {
+  padding: 8px;
+  justify-content: center;
+}
+
+.app-shell.collapsed .user-card > div:not(.avatar) {
+  display: none;
+}
+
+.collapse-btn {
+  position: absolute;
+  top: 26px;
+  right: -16px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  z-index: 50;
+  transition: all 0.2s;
+}
+
+.collapse-btn:hover {
+  background: var(--bg);
+  color: var(--blue);
 }
 
 .workspace {
   display: flex;
   flex-direction: column;
   width: calc(100% - var(--sidebar-width));
-  height: 100vh;
   margin-left: var(--sidebar-width);
+  height: 100vh;
   min-width: 0;
   overflow: hidden;
+  transition: margin-left 0.3s ease, width 0.3s ease;
+}
+
+.mobile-toggle {
+  display: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.mobile-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 35;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.app-shell.mobile-open .mobile-overlay {
+  display: block;
+  opacity: 1;
 }
 
 .topbar {
@@ -554,6 +656,11 @@ button {
   overflow-x: auto;
 }
 
+.table-shell table {
+  width: 100%;
+  min-width: max-content;
+}
+
 .report-list {
   display: grid;
   gap: 10px;
@@ -651,36 +758,33 @@ button {
 @media (max-width: 900px) {
   .app-shell {
     display: block;
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
+  }
+
+  .app-shell.collapsed {
+    --sidebar-width: 270px;
   }
 
   .sidebar {
-    position: static;
-    width: 100%;
-    height: auto;
+    transform: translateX(-100%);
+  }
+
+  .app-shell.mobile-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .collapse-btn {
+    display: none;
+  }
+
+  .mobile-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .workspace {
     width: 100%;
-    height: auto;
-    min-height: 100vh;
     margin-left: 0;
-    overflow: visible;
-  }
-
-  .content-area {
-    overflow: visible;
-  }
-
-  .side-nav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .sidebar-user {
-    display: none;
   }
 
   .two-column,
@@ -700,13 +804,16 @@ button {
     padding: 18px;
   }
 
+  .topbar > div {
+    margin-bottom: 12px;
+  }
+
   .content-area {
     padding: 18px;
   }
 
   .metric-grid,
-  .super-grid,
-  .side-nav {
+  .super-grid {
     grid-template-columns: 1fr;
   }
 
