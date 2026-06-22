@@ -12,7 +12,11 @@ import {
   UserRound,
   Users,
   Warehouse,
-  Shield
+  Shield,
+  Skull,
+  Trash2,
+  Edit2,
+  UserMinus
 } from "lucide-react";
 import {
   Bar,
@@ -99,6 +103,41 @@ const empty = {
   settings: { standard_egg_cost: 0 }
 };
 
+function formatIST(utcString) {
+  if (!utcString) return "-";
+  try {
+    let dateInput = utcString;
+    if (typeof dateInput === "string" && !dateInput.endsWith("Z") && !dateInput.includes("+") && dateInput.includes(" ")) {
+      dateInput = dateInput.replace(" ", "T") + "Z";
+    }
+    const d = new Date(dateInput);
+    if (isNaN(d.getTime())) return utcString;
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true
+    });
+    return formatter.format(d).replace(/\//g, "-").toUpperCase();
+  } catch (e) {
+    return utcString;
+  }
+}
+
+function convertToUTCDateString(dateStr) {
+  if (!dateStr || typeof dateStr !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return dateStr;
+  }
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const d = new Date();
+  d.setFullYear(year, month - 1, day);
+  return d.toISOString().slice(0, 19).replace("T", " ");
+}
+
 function MetricCard({ label, value, helper, tone }) {
   return (
     <article className={`metric-card metric-${tone}`}>
@@ -140,34 +179,73 @@ function AdminDashboard() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const storedUser = JSON.parse(localStorage.getItem("user") || "null");
-  const userRole = storedUser?.role || "ADMIN";
+  const [currentUser, setCurrentUser] = useState(() =>
+    JSON.parse(localStorage.getItem("user") || "null")
+  );
+  const userRole = currentUser?.role || "ADMIN";
 
   const visibleSections = useMemo(() => {
-    if (userRole === "MANAGER") {
-      return [
-        {
-          title: "Transactions",
-          items: sections.find((s) => s.title === "Transactions").items.filter((i) => ["egg_collections", "disposed_inventory"].includes(i.section))
-        },
-        {
-          title: "Staff",
-          items: sections.find((s) => s.title === "Staff").items
-        },
-        {
-          title: "Master Data",
-          items: sections.find((s) => s.title === "Master Data").items.filter((i) => i.section === "sheds")
+    const plan = currentUser?.planName || "Pro";
+    
+    // Map sections to preserve function/icon components
+    let filtered = sections.map(sec => ({
+      ...sec,
+      items: sec.items.map(item => ({ ...item }))
+    }));
+
+    if (plan === "Basic") {
+      filtered = filtered.map(sec => {
+        if (sec.title === "Transactions") {
+          sec.items = sec.items.filter(i => ["sales", "daybook", "egg_collections"].includes(i.section));
+        } else if (sec.title === "Staff") {
+          sec.items = [];
+        } else if (sec.title === "Master Data") {
+          sec.items = sec.items.filter(i => ["customers", "items", "sheds"].includes(i.section));
+        } else if (sec.title === "Analytics") {
+          sec.items = sec.items.filter(i => ["egg_reports"].includes(i.section));
         }
-      ];
+        return sec;
+      }).filter(sec => sec.items.length > 0);
+    } else if (plan === "Pro") {
+      filtered = filtered.map(sec => {
+        if (sec.title === "Transactions") {
+          sec.items = sec.items.filter(i => !["disposed_inventory"].includes(i.section));
+        } else if (sec.title === "Master Data") {
+          // Keep sheds visible
+          sec.items = sec.items;
+        } else if (sec.title === "Analytics") {
+          sec.items = sec.items.filter(i => !["disposal_reports"].includes(i.section));
+        }
+        return sec;
+      }).filter(sec => sec.items.length > 0);
     }
-    return sections;
-  }, [userRole]);
+
+    if (userRole === "MANAGER") {
+      filtered = filtered.map(sec => {
+        if (sec.title === "Overview") {
+          sec.items = [];
+        } else if (sec.title === "Transactions") {
+          sec.items = sec.items.filter((i) => ["egg_collections", "disposed_inventory"].includes(i.section));
+        } else if (sec.title === "Master Data") {
+          sec.items = sec.items.filter((i) => i.section === "sheds");
+        } else if (sec.title === "Analytics") {
+          sec.items = [];
+        } else if (sec.title === "Settings") {
+          sec.items = [];
+        }
+        return sec;
+      }).filter(sec => sec.items.length > 0);
+    }
+
+    return filtered;
+  }, [userRole, currentUser?.planName]);
 
   useEffect(() => {
-    if (userRole === "MANAGER" && !["egg_collections", "staff", "sheds", "disposed_inventory"].includes(active)) {
-      setActive("egg_collections");
+    const allAllowedSections = visibleSections.flatMap(s => s.items).map(i => i.section);
+    if (allAllowedSections.length > 0 && !allAllowedSections.includes(active)) {
+      setActive(allAllowedSections[0]);
     }
-  }, [userRole, active]);
+  }, [visibleSections, active]);
 
   const title = visibleSections.flatMap((s) => s.items).find((i) => i.section === active)?.label || "Dashboard";
 
@@ -184,6 +262,11 @@ function AdminDashboard() {
     setData(next);
     const dash = await getDashboard();
     setDashboard(dash.data);
+
+    // Sync latest user details from localStorage
+    const latestUser = JSON.parse(localStorage.getItem("user") || "null");
+    setCurrentUser(latestUser);
+
     setLoading(false);
   };
 
@@ -257,13 +340,14 @@ function AdminDashboard() {
       sections={visibleSections}
     >
       {loading ? <section className="panel loading-panel">Loading farm workspace...</section> : null}
-      {!loading && active === "dashboard" && (
+      {!loading && active === "dashboard" && userRole !== "MANAGER" && (
         <DashboardView
           totals={dashboard?.metrics || totals}
           pending={dashboard?.pendingReceivables || data.sales.filter((x) => num(x.balance) > 0)}
           payables={dashboard?.outstandingPayables || data.purchases.filter((x) => num(x.balance) > 0)}
           chartData={chartData}
           inventoryLoss={data.disposals?.filter(x => x.status === 'ACTIVE').reduce((s, x) => s + num(x.total_loss), 0) || 0}
+          onNavigate={setActive}
         />
       )}
       {!loading && active === "sales" && <SalesView data={data} save={save} remove={remove} />}
@@ -275,7 +359,7 @@ function AdminDashboard() {
       {!loading && active === "customers" && <MasterView title="Customers" resource="customers" records={data.customers} save={save} remove={remove} update={update} />}
       {!loading && active === "vendors" && <MasterView title="Vendors" resource="vendors" records={data.vendors} save={save} remove={remove} update={update} />}
       {!loading && active === "items" && <ItemsView data={data} save={save} remove={remove} update={update} />}
-      {!loading && active === "sheds" && <ShedsView data={data} save={save} remove={remove} userRole={userRole} />}
+      {!loading && active === "sheds" && <ShedsView data={data} save={save} remove={remove} update={update} userRole={userRole} />}
       {!loading && active === "reports" && <ReportsView totals={totals} chartData={chartData} data={data} />}
       {!loading && active === "egg_reports" && <EggReportsView data={data} />}
       {!loading && active === "disposal_reports" && <DisposalReportsView data={data} />}
@@ -314,20 +398,71 @@ function normalizePayload(payload) {
     "capacity"
   ]);
 
-  return Object.fromEntries(
+  let normalized = Object.fromEntries(
     Object.entries(payload).map(([key, value]) => [
       key,
       numericKeys.has(key) && value === "" ? 0 : value
     ])
   );
+
+  if (normalized.date) {
+    normalized.date = convertToUTCDateString(normalized.date);
+  }
+  if (normalized.disposal_date) {
+    normalized.disposal_date = convertToUTCDateString(normalized.disposal_date);
+  }
+  return normalized;
 }
 
 function SettingsView({ settings, updateSettings, reload }) {
   const [form, setForm] = useState({ standard_egg_cost: settings?.standard_egg_cost || 0 });
+  const storedUser = JSON.parse(localStorage.getItem("user") || "null");
+  const [logo, setLogo] = useState(settings?.logo || "");
+
+  useEffect(() => {
+    if (settings) {
+      setLogo(settings.logo || "");
+      if (storedUser?.tenantId) {
+        const logos = JSON.parse(localStorage.getItem("tenant_logos") || "{}");
+        if (settings.logo) {
+          logos[storedUser.tenantId] = settings.logo;
+        } else {
+          delete logos[storedUser.tenantId];
+        }
+        localStorage.setItem("tenant_logos", JSON.stringify(logos));
+        
+        if (storedUser.logo !== (settings.logo || null)) {
+          const updatedUser = { ...storedUser, logo: settings.logo || null };
+          localStorage.setItem("user", JSON.stringify(updatedUser));
+        }
+      }
+    }
+  }, [settings]);
+
+  const handleLogoUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setLogo(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleSave = async () => {
     try {
-      await updateSettings(form);
+      await updateSettings({ ...form, logo: logo || null });
+      if (storedUser?.tenantId) {
+        const logos = JSON.parse(localStorage.getItem("tenant_logos") || "{}");
+        if (logo) {
+          logos[storedUser.tenantId] = logo;
+        } else {
+          delete logos[storedUser.tenantId];
+        }
+        localStorage.setItem("tenant_logos", JSON.stringify(logos));
+        const updatedUser = { ...storedUser, logo: logo || null };
+        localStorage.setItem("user", JSON.stringify(updatedUser));
+      }
       await reload();
       alert("Settings saved successfully.");
     } catch (err) {
@@ -336,23 +471,56 @@ function SettingsView({ settings, updateSettings, reload }) {
   };
 
   return (
-    <CrudPanel title="App Settings" button="" onSubmit={handleSave}>
-      <div style={{ padding: '20px', maxWidth: '600px' }}>
-        <Field label="Standard Egg Disposal Cost (₹)">
-          <input 
-            type="number" 
-            step="0.01" 
-            min="0" 
-            value={form.standard_egg_cost} 
-            onChange={e => setForm({...form, standard_egg_cost: e.target.value})} 
-            required 
-            style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
-          />
-          <p style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>Used to calculate financial loss when disposing eggs.</p>
-        </Field>
-        <button type="submit" className="btn btn-primary" style={{ marginTop: '20px' }}>Save Settings</button>
+    <>
+      <div className="page-description-banner">
+        <p><strong>Farm Settings.</strong> Configure standard cost for disposed items, system rules, and multi-tenant parameters for poultry operations.</p>
       </div>
-    </CrudPanel>
+      <CrudPanel title="App Settings" button="" onSubmit={handleSave}>
+        <div style={{ padding: '20px', maxWidth: '600px', display: 'grid', gap: '20px' }}>
+          <Field label="Standard Egg Disposal Cost (₹)">
+            <input 
+              type="number" 
+              step="0.01" 
+              min="0" 
+              value={form.standard_egg_cost} 
+              onChange={e => setForm({...form, standard_egg_cost: e.target.value})} 
+              required 
+              style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+            />
+            <p style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>Used to calculate financial loss when disposing eggs.</p>
+          </Field>
+          
+          <Field label="Farm Brand Logo">
+            <input 
+              type="file" 
+              accept="image/*"
+              onChange={handleLogoUpload} 
+              style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', background: '#fff' }}
+            />
+            {logo && (
+              <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <img src={logo} alt="Farm Brand Logo" style={{ height: '50px', objectFit: 'contain', borderRadius: '6px', border: '1px solid var(--line)' }} />
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                  onClick={() => {
+                    if (confirm("Remove this logo?")) {
+                      setLogo("");
+                    }
+                  }}
+                >
+                  Remove Logo
+                </button>
+              </div>
+            )}
+            <p style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>Upload a custom logo to display on the main dashboard sidebar.</p>
+          </Field>
+          
+          <button type="submit" className="btn btn-primary" style={{ marginTop: '10px', width: 'fit-content' }}>Save Settings</button>
+        </div>
+      </CrudPanel>
+    </>
   );
 }
 
@@ -378,7 +546,7 @@ function DisposedInventoryView({ data, saveDisposal, updateDisposal, voidDisposa
 
   const handleSave = async () => {
     try {
-      const payload = { ...form, disposal_type: tab, item_snapshot_name: tab === 'EGG' ? 'Eggs' : data.purchases.find(p => String(p.id) === String(form.source_id))?.item_name || 'Unknown Item' };
+      const payload = { ...form, disposal_date: convertToUTCDateString(form.disposal_date), disposal_type: tab, item_snapshot_name: tab === 'EGG' ? 'Eggs' : data.purchases.find(p => String(p.id) === String(form.source_id))?.item_name || 'Unknown Item' };
       await saveDisposal(payload);
       setForm({ disposal_date: today(), disposal_reason: "", quantity: "", notes: "", source_id: "" });
       await reload();
@@ -405,6 +573,10 @@ function DisposedInventoryView({ data, saveDisposal, updateDisposal, voidDisposa
 
   return (
     <div>
+      <div className="page-description-banner">
+        <p><strong>Disposal & Wastage Logs.</strong> Record broke, cracked, or spoiled eggs, and damaged or expired inventory items. Tracks standard cost losses dynamically.</p>
+      </div>
+
       {userRole !== 'MANAGER' && (
         <section className="metric-grid" style={{ marginBottom: '24px' }}>
           <MetricCard label="Total Collected (Eggs)" value={totalCollected} tone="blue" />
@@ -468,7 +640,7 @@ function DisposedInventoryView({ data, saveDisposal, updateDisposal, voidDisposa
               {data.disposals.map(d => (
                 <tr key={d.id} style={{ opacity: d.status === 'VOID' ? 0.6 : 1 }}>
                   <td>{d.disposal_number}</td>
-                  <td>{d.disposal_date.slice(0, 10)}</td>
+                  <td>{formatIST(d.disposal_date)}</td>
                   <td>{d.disposal_type}</td>
                   <td>{d.item_snapshot_name}</td>
                   <td>{d.quantity} {d.unit || ''}</td>
@@ -572,11 +744,16 @@ function DisposalReportsView({ data }) {
 
   return (
     <>
-      <div className="filter-bar" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginBottom: '1.5rem', alignItems: 'center' }}>
-        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>From:</label>
-        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
-        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>To:</label>
-        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
+      <div className="page-description-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', padding: '12px 20px' }}>
+        <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)", fontWeight: "500", flex: 1, minWidth: '300px' }}>
+          <strong>Inventory Loss Reports.</strong> Analytics on cracked/spoiled eggs and expired feed/supplies. Inspect main reasons for loss and monitor trends over time.
+        </p>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <span style={{ fontSize: '13px', color: '#526b5c', fontWeight: '600' }}>From:</span>
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: '2px 8px', height: '28px', fontSize: '12px', border: '1px solid var(--line-strong)', borderRadius: '6px', color: 'var(--text)', background: '#ffffff', outline: 'none' }} />
+          <span style={{ fontSize: '13px', color: '#526b5c', fontWeight: '600' }}>To:</span>
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: '2px 8px', height: '28px', fontSize: '12px', border: '1px solid var(--line-strong)', borderRadius: '6px', color: 'var(--text)', background: '#ffffff', outline: 'none' }} />
+        </div>
       </div>
 
       <section className="metric-grid">
@@ -614,17 +791,69 @@ function DisposalReportsView({ data }) {
   );
 }
 
-function DashboardView({ totals, pending, payables, chartData, inventoryLoss }) {
+function DashboardView({ totals, pending, payables, chartData, inventoryLoss, onNavigate }) {
+  const storedUser = JSON.parse(localStorage.getItem("user") || "null");
+  const userRole = storedUser?.role || "ADMIN";
+  const fullName = storedUser?.fullName || "Test Admin";
+  const roleLabel = userRole === "SUPER_ADMIN" ? "Super Admin" : userRole === "MANAGER" ? "Manager" : "Admin";
+
+  const dateString = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+
   return (
     <>
+      <div className="welcome-card-dark">
+        <h2>
+          Good Morning, {fullName}! 👋
+          <span className="welcome-role">{roleLabel}</span>
+        </h2>
+        <div className="welcome-date">{dateString}</div>
+        <p className="welcome-farm-label">FARM</p>
+        <p className="welcome-farm-name">Farm Intelligence Center</p>
+      </div>
+
       <section className="metric-grid">
-        <MetricCard label="Total Income" value={money(totals.income)} helper="Sales + misc income" tone="green" />
-        <MetricCard label="Total Expenses" value={money(totals.expense)} helper="Purchases + daybook + salary" tone="red" />
-        <MetricCard label="Net Profit" value={money(totals.income - totals.expense)} helper="Income - expenses" tone={totals.income >= totals.expense ? "green" : "red"} />
-        <MetricCard label="Receivables" value={money(totals.receivables)} helper="Customers owe you" tone="amber" />
-        <MetricCard label="Payables" value={money(totals.payables)} helper="You owe vendors" tone="amber" />
-        <MetricCard label="Inventory Loss" value={money(inventoryLoss)} helper="Value of disposed items" tone="red" />
+        <MetricCard label="TOTAL INCOME" value={money(totals.income)} helper="Sales + misc income" tone="green" />
+        <MetricCard label="TOTAL EXPENSES" value={money(totals.expense)} helper="Purchases + daybook + salary" tone="red" />
+        <MetricCard label="NET PROFIT" value={money(totals.income - totals.expense)} helper="Income - expenses" tone={totals.income >= totals.expense ? "green" : "red"} />
+        <MetricCard label="RECEIVABLES" value={money(totals.receivables)} helper="Customers owe you" tone="amber" />
+        <MetricCard label="PAYABLES" value={money(totals.payables)} helper="You owe vendors" tone="amber" />
+        <MetricCard label="SALARY PAID" value={money(totals.salaryPaid)} helper="All staff, all time" tone="purple" />
       </section>
+
+      <section className="quick-actions-section">
+        <h3 className="section-title">QUICK ACTIONS</h3>
+        <div className="quick-actions-grid">
+          <button className="quick-action-card" onClick={() => onNavigate("egg_collections")}>
+            <div className="quick-icon-wrap green-wrap"><Egg size={20} /></div>
+            <span>Record Eggs</span>
+          </button>
+          <button className="quick-action-card" onClick={() => onNavigate("disposed_inventory")}>
+            <div className="quick-icon-wrap red-wrap"><Skull size={20} /></div>
+            <span>Record Mortality</span>
+          </button>
+          <button className="quick-action-card" onClick={() => onNavigate("disposed_inventory")}>
+            <div className="quick-icon-wrap orange-wrap"><Package size={20} /></div>
+            <span>Record Feed</span>
+          </button>
+          <button className="quick-action-card" onClick={() => onNavigate("sheds")}>
+            <div className="quick-icon-wrap emerald-wrap"><Plus size={20} /></div>
+            <span>Add Batch</span>
+          </button>
+          <button className="quick-action-card" onClick={() => onNavigate("sales")}>
+            <div className="quick-icon-wrap teal-wrap"><Tag size={20} /></div>
+            <span>Sales</span>
+          </button>
+          <button className="quick-action-card" onClick={() => onNavigate("items")}>
+            <div className="quick-icon-wrap blue-wrap"><Warehouse size={20} /></div>
+            <span>Inventory</span>
+          </button>
+          <button className="quick-action-card" onClick={() => onNavigate("reports")}>
+            <div className="quick-icon-wrap blue-wrap"><ChartNoAxesColumn size={20} /></div>
+            <span>Reports</span>
+          </button>
+        </div>
+      </section>
+
       <section className="two-column">
         <Ledger title="Pending Receivables" subtitle="Customers who owe you" rows={pending} nameKey="customer_name" amountKey="balance" tone="amber" />
         <Ledger title="Outstanding Payables" subtitle="What you owe vendors" rows={payables} nameKey="vendor_name" amountKey="balance" tone="red" />
@@ -676,8 +905,30 @@ function SalesView({ data, save, remove }) {
   const item = data.items.find((x) => String(x.id) === String(form.item_id));
   const customer = data.customers.find((x) => String(x.id) === String(form.customer_id));
   const total = num(form.qty) * num(form.price);
+
+  const handleSubmit = async () => {
+    const paidVal = num(form.paid);
+    if (paidVal > total) {
+      alert(`Paid amount (₹${paidVal}) cannot be greater than the Total amount (₹${total}).`);
+      return;
+    }
+    await save("sales", {
+      ...form,
+      customer_name: customer?.name,
+      item_name: item?.name,
+      unit: item?.unit,
+      total,
+      balance: total - paidVal
+    });
+    setForm({ date: today(), customer_id: "", item_id: "", qty: "", price: "", paid: "", notes: "" });
+  };
+
   return (
-    <CrudPanel title="New Sale" button="Save Sale" onSubmit={() => save("sales", { ...form, customer_name: customer?.name, item_name: item?.name, unit: item?.unit, total, balance: total - num(form.paid) })}>
+    <>
+      <div className="page-description-banner">
+        <p><strong>Sales Registry.</strong> Record and manage sales of eggs, layers, feed bags, and other assets. Keep track of customer balances, invoice receipts, and pending payments.</p>
+      </div>
+      <CrudPanel title="New Sale" button="Save Sale" onSubmit={handleSubmit}>
       <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></Field>
       <Field label="Customer"><select value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: e.target.value })} required><option value="">Select Customer</option>{data.customers.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
       <Field label="Item"><select value={form.item_id} onChange={(e) => { const it = data.items.find((x) => String(x.id) === e.target.value); setForm({ ...form, item_id: e.target.value, price: it?.price || "" }); }} required><option value="">Select Item</option>{data.items.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
@@ -688,9 +939,10 @@ function SalesView({ data, save, remove }) {
       <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes" /></Field>
       <Records
         cols={["Date", "Customer", "Item", "Qty", "Total", "Paid", "Balance", ""]}
-        rows={data.sales.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.customer_name}</td><td>{x.item_name}</td><td>{x.qty} {x.unit}</td><td>{money(x.total)}</td><td>{money(x.paid)}</td><td>{money(x.balance)}</td><td><button className="btn btn-danger" onClick={() => remove("sales", x.id)}>Delete</button></td></tr>)}
+        rows={data.sales.map((x) => <tr key={x.id}><td>{formatIST(x.date)}</td><td>{x.customer_name}</td><td>{x.item_name}</td><td>{x.qty} {x.unit}</td><td>{money(x.total)}</td><td>{money(x.paid)}</td><td>{money(x.balance)}</td><td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("sales", x.id)}><Trash2 size={15} /></button></td></tr>)}
       />
     </CrudPanel>
+    </>
   );
 }
 
@@ -699,8 +951,30 @@ function PurchasesView({ data, save, remove }) {
   const item = data.items.find((x) => String(x.id) === String(form.item_id));
   const vendor = data.vendors.find((x) => String(x.id) === String(form.vendor_id));
   const cost = num(form.qty) * num(form.price);
+
+  const handleSubmit = async () => {
+    const paidVal = num(form.paid);
+    if (paidVal > cost) {
+      alert(`Paid amount (₹${paidVal}) cannot be greater than the Cost amount (₹${cost}).`);
+      return;
+    }
+    await save("purchases", {
+      ...form,
+      vendor_name: vendor?.name,
+      item_name: item?.name,
+      unit: item?.unit,
+      cost,
+      balance: cost - paidVal
+    });
+    setForm({ date: today(), vendor_id: "", item_id: "", qty: "", price: "", paid: "", notes: "" });
+  };
+
   return (
-    <CrudPanel title="New Purchase" button="Save Purchase" onSubmit={() => save("purchases", { ...form, vendor_name: vendor?.name, item_name: item?.name, unit: item?.unit, cost, balance: cost - num(form.paid) })}>
+    <>
+      <div className="page-description-banner">
+        <p><strong>Purchases Registry.</strong> Log incoming supplies including poultry feed, vaccines, medicines, and equipment. Track vendor invoices, paid amounts, and outstanding payables.</p>
+      </div>
+      <CrudPanel title="New Purchase" button="Save Purchase" onSubmit={handleSubmit}>
       <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></Field>
       <Field label="Vendor"><select value={form.vendor_id} onChange={(e) => setForm({ ...form, vendor_id: e.target.value })} required><option value="">Select Vendor</option>{data.vendors.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
       <Field label="Item"><select value={form.item_id} onChange={(e) => { const it = data.items.find((x) => String(x.id) === e.target.value); setForm({ ...form, item_id: e.target.value, price: it?.price || "" }); }} required><option value="">Select Item</option>{data.items.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
@@ -709,8 +983,9 @@ function PurchasesView({ data, save, remove }) {
       <Field label="Paid"><input type="number" min="0" step="any" value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} placeholder="Paid" required /></Field>
       <Field label="Cost"><input readOnly value={money(cost)} placeholder="Cost" /></Field>
       <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes" /></Field>
-      <Records cols={["Date", "Vendor", "Item", "Qty", "Cost", "Paid", "Balance", ""]} rows={data.purchases.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.vendor_name}</td><td>{x.item_name}</td><td>{x.qty} {x.unit}</td><td>{money(x.cost)}</td><td>{money(x.paid)}</td><td>{money(x.balance)}</td><td><button className="btn btn-danger" onClick={() => remove("purchases", x.id)}>Delete</button></td></tr>)} />
+      <Records cols={["Date", "Vendor", "Item", "Qty", "Cost", "Paid", "Balance", ""]} rows={data.purchases.map((x) => <tr key={x.id}><td>{formatIST(x.date)}</td><td>{x.vendor_name}</td><td>{x.item_name}</td><td>{x.qty} {x.unit}</td><td>{money(x.cost)}</td><td>{money(x.paid)}</td><td>{money(x.balance)}</td><td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("purchases", x.id)}><Trash2 size={15} /></button></td></tr>)} />
     </CrudPanel>
+    </>
   );
 }
 
@@ -718,29 +993,51 @@ function PaymentsView({ data, save, remove }) {
   const [form, setForm] = useState({ date: today(), type: "sale", ref_id: "", amount: "", notes: "" });
   const refs = form.type === "sale" ? data.sales.filter((x) => num(x.balance) > 0) : data.purchases.filter((x) => num(x.balance) > 0);
   const ref = refs.find((x) => String(x.id) === String(form.ref_id));
+
+  const handleSubmit = async () => {
+    const amountVal = num(form.amount);
+    const balanceVal = num(ref?.balance);
+    if (amountVal > balanceVal) {
+      alert(`Payment Amount (₹${amountVal}) cannot be greater than the Pending Bill balance (₹${balanceVal}).`);
+      return;
+    }
+    await save("payments", { ...form, ref_name: ref?.customer_name || ref?.vendor_name });
+    setForm({ date: today(), type: "sale", ref_id: "", amount: "", notes: "" });
+  };
+
   return (
-    <CrudPanel title="Record Payment" button="Save Payment" onSubmit={() => save("payments", { ...form, ref_name: ref?.customer_name || ref?.vendor_name })}>
+    <>
+      <div className="page-description-banner">
+        <p><strong>Payment Receipts & Disbursements.</strong> Record incoming customer payments and outgoing vendor bill clearings. Directly links to outstanding transactions to settle farm books.</p>
+      </div>
+      <CrudPanel title="Record Payment" button="Save Payment" onSubmit={handleSubmit}>
       <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></Field>
       <Field label="Type"><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, ref_id: "" })} required><option value="sale">Customer Payment</option><option value="purchase">Vendor Payment</option></select></Field>
       <Field label="Pending Bill"><select value={form.ref_id} onChange={(e) => setForm({ ...form, ref_id: e.target.value })} required><option value="">Select Bill</option>{refs.map((x) => <option value={x.id} key={x.id}>{x.customer_name || x.vendor_name} · {money(x.balance)}</option>)}</select></Field>
       <Field label="Amount"><input type="number" min="0" step="any" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="Amount" required /></Field>
       <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes" /></Field>
-      <Records cols={["Date", "Type", "Name", "Amount", "Notes", ""]} rows={data.payments.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.type}</td><td>{x.ref_name}</td><td>{money(x.amount)}</td><td>{x.notes}</td><td><button className="btn btn-danger" onClick={() => remove("payments", x.id)}>Delete</button></td></tr>)} />
+      <Records cols={["Date", "Type", "Name", "Amount", "Notes", ""]} rows={data.payments.map((x) => <tr key={x.id}><td>{formatIST(x.date)}</td><td>{x.type}</td><td>{x.ref_name}</td><td>{money(x.amount)}</td><td>{x.notes || "-"}</td><td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("payments", x.id)}><Trash2 size={15} /></button></td></tr>)} />
     </CrudPanel>
+    </>
   );
 }
 
 function DaybookView({ data, save, remove }) {
   const [form, setForm] = useState({ date: today(), kind: "expense", category: "", amount: "", notes: "" });
   return (
-    <CrudPanel title="Day Book Entry" button="Save Entry" onSubmit={() => save("daybook", form)}>
+    <>
+      <div className="page-description-banner">
+        <p><strong>Day Book Ledger.</strong> Cashbook register for documenting miscellaneous farm incomes and petty cash expenses such as transport, diesel, or maintenance.</p>
+      </div>
+      <CrudPanel title="Day Book Entry" button="Save Entry" onSubmit={() => save("daybook", form)}>
       <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></Field>
       <Field label="Kind"><select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} required><option value="income">Income</option><option value="expense">Expense</option></select></Field>
       <Field label="Category"><input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="Transport, medicine, misc..." required /></Field>
       <Field label="Amount"><input type="number" min="0" step="any" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="Amount" required /></Field>
       <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes" /></Field>
-      <Records cols={["Date", "Kind", "Category", "Amount", "Notes", ""]} rows={data.daybook.map((x) => <tr key={x.id}><td>{x.date}</td><td><span className={`badge ${x.kind === "income" ? "badge-green" : "badge-red"}`}>{x.kind}</span></td><td>{x.category}</td><td>{money(x.amount)}</td><td>{x.notes}</td><td><button className="btn btn-danger" onClick={() => remove("daybook", x.id)}>Delete</button></td></tr>)} />
+      <Records cols={["Date", "Kind", "Category", "Amount", "Notes", ""]} rows={data.daybook.map((x) => <tr key={x.id}><td>{formatIST(x.date)}</td><td><span className={`badge ${x.kind === "income" ? "badge-green" : "badge-red"}`}>{x.kind}</span></td><td>{x.category}</td><td>{money(x.amount)}</td><td>{x.notes || "-"}</td><td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("daybook", x.id)}><Trash2 size={15} /></button></td></tr>)} />
     </CrudPanel>
+    </>
   );
 }
 
@@ -759,7 +1056,7 @@ function StaffView({ data, save, remove, userRole }) {
       row.date?.startsWith(salaryMonth)
     );
     return {
-      workDays: rows.reduce((sum, row) => sum + num(row.work_days), 0),
+      workDays: rows.length,
       presentDays: rows.reduce((sum, row) => sum + (row.status === "ABSENT" ? 0 : num(row.work_days)), 0)
     };
   };
@@ -767,56 +1064,125 @@ function StaffView({ data, save, remove, userRole }) {
   const updateSalaryStaff = (staffId, salaryMonth = salary.month) => {
     const selected = data.staff.find((x) => String(x.id) === String(staffId));
     const summary = attendanceSummary(staffId, salaryMonth);
+    const standardSalary = num(selected?.salary);
+    const wDays = num(summary.workDays);
+    const pDays = num(summary.presentDays);
+    const calculatedGross = wDays > 0 ? Math.round((standardSalary / wDays) * pDays * 100) / 100 : standardSalary;
+
     setSalary({
       ...salary,
       staff_id: staffId,
       month: salaryMonth,
-      gross: selected?.salary || "",
+      gross: calculatedGross || "",
       work_days: summary.workDays || "",
       present_days: summary.presentDays || ""
     });
   };
 
+  const handleWorkDaysChange = (workDaysVal) => {
+    const selected = data.staff.find((x) => String(x.id) === String(salary.staff_id));
+    const standardSalary = num(selected?.salary);
+    const wDays = num(workDaysVal);
+    const pDays = num(salary.present_days);
+    const calculatedGross = wDays > 0 ? Math.round((standardSalary / wDays) * pDays * 100) / 100 : standardSalary;
+    setSalary({
+      ...salary,
+      work_days: workDaysVal,
+      gross: calculatedGross
+    });
+  };
+
+  const handlePresentDaysChange = (presentDaysVal) => {
+    const selected = data.staff.find((x) => String(x.id) === String(salary.staff_id));
+    const standardSalary = num(selected?.salary);
+    const wDays = num(salary.work_days);
+    const pDays = num(presentDaysVal);
+    const calculatedGross = wDays > 0 ? Math.round((standardSalary / wDays) * pDays * 100) / 100 : standardSalary;
+    setSalary({
+      ...salary,
+      present_days: presentDaysVal,
+      gross: calculatedGross
+    });
+  };
+
+  const handleStaffSubmit = async () => {
+    const name = staff.name.trim();
+    const phone = staff.phone.trim();
+    const role = staff.role_title.trim();
+    const salaryVal = String(staff.salary).trim();
+    if (!name || !phone || !role || !salaryVal) {
+      alert("Please fill in all required fields.");
+      return;
+    }
+    if (data.staff.some(x => x.name.toLowerCase() === name.toLowerCase())) {
+      alert("Duplicate Record: A staff member with this name already exists.");
+      return;
+    }
+    if (data.staff.some(x => x.phone === phone)) {
+      alert("Duplicate Record: A staff member with this phone number already exists.");
+      return;
+    }
+    await save("staff", { ...staff, name, phone, role_title: role, salary: salaryVal });
+    setStaff({ name: "", phone: "", role_title: "", salary: "", join_date: today(), status: "ACTIVE" });
+  };
+
   return (
     <>
+      <div className="page-description-banner">
+        <p><strong>Staff Register, Attendance & Payroll.</strong> Manage farm hands, record daily attendance logs, assign salaries, track advances, and disburse monthly payouts.</p>
+      </div>
+
       {userRole !== "MANAGER" && (
-        <CrudPanel title="Staff Member" button="Add Staff" onSubmit={() => save("staff", staff)}>
-          <Field label="Name"><input value={staff.name} onChange={(e) => setStaff({ ...staff, name: e.target.value })} placeholder="Full name" required /></Field>
-          <Field label="Phone"><input type="tel" pattern="[0-9]{10}" title="10-digit phone number" value={staff.phone} onChange={(e) => setStaff({ ...staff, phone: e.target.value })} placeholder="Phone number" required /></Field>
-          <Field label="Role"><input value={staff.role_title} onChange={(e) => setStaff({ ...staff, role_title: e.target.value })} placeholder="Job title" required /></Field>
-          <Field label="Salary"><input type="number" min="0" step="any" value={staff.salary} onChange={(e) => setStaff({ ...staff, salary: e.target.value })} placeholder="Monthly salary" required /></Field>
-          <Field label="Join Date"><input type="date" value={staff.join_date} onChange={(e) => setStaff({ ...staff, join_date: e.target.value })} required /></Field>
-        </CrudPanel>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px', marginBottom: '30px' }}>
+          <CrudPanel title="Staff Member" button="Add Staff" onSubmit={handleStaffSubmit}>
+            <Field label="Name"><input value={staff.name} onChange={(e) => setStaff({ ...staff, name: e.target.value })} placeholder="Full name" required /></Field>
+            <Field label="Phone"><input type="tel" pattern="[0-9]{10}" title="10-digit phone number" value={staff.phone} onChange={(e) => setStaff({ ...staff, phone: e.target.value })} placeholder="Phone number" required /></Field>
+            <Field label="Role"><input value={staff.role_title} onChange={(e) => setStaff({ ...staff, role_title: e.target.value })} placeholder="Job title" required /></Field>
+            <Field label="Salary"><input type="number" min="0" step="any" value={staff.salary} onChange={(e) => setStaff({ ...staff, salary: e.target.value })} placeholder="Monthly salary" required /></Field>
+            <Field label="Join Date"><input type="date" value={staff.join_date} onChange={(e) => setStaff({ ...staff, join_date: e.target.value })} required /></Field>
+            <Records cols={["Name", "Role", "Phone", "Salary", "Status", ""]} rows={data.staff.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.role_title}</td><td>{x.phone || "-"}</td><td>{money(x.salary)}</td><td><span className="badge badge-green">{x.status}</span></td><td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("staff", x.id)}><Trash2 size={15} /></button></td></tr>)} />
+          </CrudPanel>
+        </div>
       )}
-      <CrudPanel title="Attendance" button="Mark Attendance" onSubmit={() => save("attendance", { ...attendance, staff_name: attMember?.name })}>
-        <StaffSelect data={data.staff} value={attendance.staff_id} onChange={(v) => setAttendance({ ...attendance, staff_id: v })} />
-        <Field label="Date"><input type="date" value={attendance.date} onChange={(e) => setAttendance({ ...attendance, date: e.target.value })} required /></Field>
-        <Field label="Status"><select value={attendance.status} onChange={(e) => setAttendance({ ...attendance, status: e.target.value, work_days: e.target.value === "HALF_DAY" ? "0.5" : e.target.value === "ABSENT" ? "0" : "1" })} required><option value="PRESENT">Present</option><option value="HALF_DAY">Half Day</option><option value="ABSENT">Absent</option><option value="PAID_LEAVE">Paid Leave</option></select></Field>
-        <Field label="Working Days"><input type="number" step="0.5" min="0" value={attendance.work_days} onChange={(e) => setAttendance({ ...attendance, work_days: e.target.value })} placeholder="Work days" required /></Field>
-        <Field label="Notes"><input value={attendance.notes} onChange={(e) => setAttendance({ ...attendance, notes: e.target.value })} placeholder="Optional notes" /></Field>
-      </CrudPanel>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px', marginBottom: '30px' }}>
+        <CrudPanel title="Attendance" button="Mark Attendance" onSubmit={() => save("attendance", { ...attendance, staff_name: attMember?.name })}>
+          <StaffSelect data={userRole === "MANAGER" ? data.staff.filter(x => x.role_title?.toLowerCase() !== "manager") : data.staff} value={attendance.staff_id} onChange={(v) => setAttendance({ ...attendance, staff_id: v })} />
+          <Field label="Date"><input type="date" value={attendance.date} onChange={(e) => setAttendance({ ...attendance, date: e.target.value })} required /></Field>
+          <Field label="Status"><select value={attendance.status} onChange={(e) => setAttendance({ ...attendance, status: e.target.value, work_days: e.target.value === "HALF_DAY" ? "0.5" : e.target.value === "ABSENT" ? "0" : "1" })} required><option value="PRESENT">Present</option><option value="HALF_DAY">Half Day</option><option value="ABSENT">Absent</option><option value="PAID_LEAVE">Paid Leave</option></select></Field>
+          <Field label="Working Days"><input type="number" step="0.5" min="0" value={attendance.work_days} onChange={(e) => setAttendance({ ...attendance, work_days: e.target.value })} placeholder="Work days" required /></Field>
+          <Field label="Notes"><input value={attendance.notes} onChange={(e) => setAttendance({ ...attendance, notes: e.target.value })} placeholder="Optional notes" /></Field>
+          <Records cols={userRole === "MANAGER" ? ["Date", "Staff", "Status", "Working Days", "Notes"] : ["Date", "Staff", "Status", "Working Days", "Notes", ""]} rows={(userRole === "MANAGER" ? data.attendance.filter(x => { const st = data.staff.find(s => String(s.id) === String(x.staff_id)); return !st || st.role_title?.toLowerCase() !== "manager"; }) : data.attendance).map((x) => <tr key={x.id}><td>{formatIST(x.date)}</td><td>{x.staff_name}</td><td><span className={x.status === "ABSENT" ? "badge badge-red" : "badge badge-green"}>{x.status?.replace("_", " ")}</span></td><td>{x.work_days}</td><td>{x.notes || "-"}</td>{userRole !== "MANAGER" && <td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("attendance", x.id)}><Trash2 size={15} /></button></td>}</tr>)} />
+        </CrudPanel>
+      </div>
+
       {userRole !== "MANAGER" && (
-        <div className="two-column">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px', marginBottom: '30px' }}>
           <CrudPanel title="Advance" button="Record Advance" onSubmit={() => save("advances", { ...advance, staff_name: advMember?.name })}>
             <StaffSelect data={data.staff} value={advance.staff_id} onChange={(v) => setAdvance({ ...advance, staff_id: v })} />
             <Field label="Date"><input type="date" value={advance.date} onChange={(e) => setAdvance({ ...advance, date: e.target.value })} required /></Field>
             <Field label="Amount"><input type="number" min="0" step="any" value={advance.amount} onChange={(e) => setAdvance({ ...advance, amount: e.target.value })} placeholder="Amount" required /></Field>
             <Field label="Notes"><input value={advance.notes} onChange={(e) => setAdvance({ ...advance, notes: e.target.value })} placeholder="Optional notes" /></Field>
-          </CrudPanel>
-          <CrudPanel title="Salary Payment" button="Pay Salary" onSubmit={() => save("salaries", { ...salary, staff_name: staffMember?.name, gross: salary.gross || staffMember?.salary })}>
-            <StaffSelect data={data.staff} value={salary.staff_id} onChange={(v) => updateSalaryStaff(v)} />
-            <Field label="Month"><input type="month" value={salary.month} onChange={(e) => updateSalaryStaff(salary.staff_id, e.target.value)} required /></Field>
-            <Field label="Working Days"><input type="number" step="0.5" min="0" value={salary.work_days} onChange={(e) => setSalary({ ...salary, work_days: e.target.value })} placeholder="Work days" required /></Field>
-            <Field label="Present Days"><input type="number" step="0.5" min="0" value={salary.present_days} onChange={(e) => setSalary({ ...salary, present_days: e.target.value })} placeholder="Present days" required /></Field>
-            <Field label="Gross"><input type="number" min="0" step="any" value={salary.gross} onChange={(e) => setSalary({ ...salary, gross: e.target.value })} placeholder="Gross salary" required /></Field>
-            <Field label="Advance Deducted"><input type="number" min="0" step="any" value={salary.advance_deducted} onChange={(e) => setSalary({ ...salary, advance_deducted: e.target.value })} placeholder="Deductions" required /></Field>
-            <Field label="Net"><input readOnly value={money(num(salary.gross) - num(salary.advance_deducted))} placeholder="Net salary" /></Field>
+            <Records cols={["Date", "Staff", "Amount", "Notes", ""]} rows={data.advances.map((x) => <tr key={x.id}><td>{formatIST(x.date)}</td><td>{x.staff_name}</td><td>{money(x.amount)}</td><td>{x.notes || "-"}</td><td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("advances", x.id)}><Trash2 size={15} /></button></td></tr>)} />
           </CrudPanel>
         </div>
       )}
-      {userRole !== "MANAGER" && <Records cols={["Name", "Role", "Phone", "Salary", "Status", ""]} rows={data.staff.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.role_title}</td><td>{x.phone}</td><td>{money(x.salary)}</td><td><span className="badge badge-green">{x.status}</span></td><td><button className="btn btn-danger" onClick={() => remove("staff", x.id)}>Delete</button></td></tr>)} />}
-      <Records cols={userRole === "MANAGER" ? ["Date", "Staff", "Status", "Working Days", "Notes"] : ["Date", "Staff", "Status", "Working Days", "Notes", ""]} rows={data.attendance.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.staff_name}</td><td><span className={x.status === "ABSENT" ? "badge badge-red" : "badge badge-green"}>{x.status?.replace("_", " ")}</span></td><td>{x.work_days}</td><td>{x.notes}</td>{userRole !== "MANAGER" && <td><button className="btn btn-danger" onClick={() => remove("attendance", x.id)}>Delete</button></td>}</tr>)} />
-      {userRole !== "MANAGER" && <Records cols={["Date", "Staff", "Month", "Days", "Gross", "Deducted", "Net", ""]} rows={data.salaries.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.staff_name}</td><td>{x.month}</td><td>{x.present_days}/{x.work_days}</td><td>{money(x.gross)}</td><td>{money(x.advance_deducted)}</td><td>{money(x.net)}</td><td><button className="btn btn-danger" onClick={() => remove("salaries", x.id)}>Delete</button></td></tr>)} />}
+
+      {userRole !== "MANAGER" && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px', marginBottom: '30px' }}>
+          <CrudPanel title="Salary Payment" button="Pay Salary" onSubmit={() => save("salaries", { ...salary, staff_name: staffMember?.name, gross: salary.gross || staffMember?.salary })}>
+            <StaffSelect data={data.staff} value={salary.staff_id} onChange={(v) => updateSalaryStaff(v)} />
+            <Field label="Month"><input type="month" value={salary.month} onChange={(e) => updateSalaryStaff(salary.staff_id, e.target.value)} required /></Field>
+            <Field label="Working Days"><input type="number" step="0.5" min="0" value={salary.work_days} onChange={(e) => handleWorkDaysChange(e.target.value)} placeholder="Work days" required /></Field>
+            <Field label="Present Days"><input type="number" step="0.5" min="0" value={salary.present_days} onChange={(e) => handlePresentDaysChange(e.target.value)} placeholder="Present days" required /></Field>
+            <Field label="Gross"><input type="number" min="0" step="any" value={salary.gross} onChange={(e) => setSalary({ ...salary, gross: e.target.value })} placeholder="Gross salary" required /></Field>
+            <Field label="Leave/Absent Deduction"><input readOnly value={money(Math.max(0, num(staffMember?.salary) - num(salary.gross)))} style={{ background: 'var(--surface-soft)' }} /></Field>
+            <Field label="Advance Deducted"><input type="number" min="0" step="any" value={salary.advance_deducted} onChange={(e) => setSalary({ ...salary, advance_deducted: e.target.value })} placeholder="Deductions" required /></Field>
+            <Field label="Net"><input readOnly value={money(Math.max(0, num(salary.gross) - num(salary.advance_deducted)))} placeholder="Net salary" /></Field>
+            <Records cols={["Date", "Staff", "Month", "Days", "Gross", "Deducted", "Net", ""]} rows={data.salaries.map((x) => <tr key={x.id}><td>{formatIST(x.date)}</td><td>{x.staff_name}</td><td>{x.month}</td><td>{x.present_days}/{x.work_days}</td><td>{money(x.gross)}</td><td>{money(x.advance_deducted)}</td><td>{money(x.net)}</td><td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("salaries", x.id)}><Trash2 size={15} /></button></td></tr>)} />
+          </CrudPanel>
+        </div>
+      )}
     </>
   );
 }
@@ -833,11 +1199,27 @@ function MasterView({ title, resource, records, save, remove, update }) {
   const filteredRecords = records.filter(r => r.name?.toLowerCase().includes(search.toLowerCase()));
 
   const handleSubmit = async () => {
+    const name = form.name.trim();
+    const phone = form.phone.trim();
+    const email = form.email.trim();
+    const address = form.address.trim();
+    if (!name) {
+      alert("Name is required.");
+      return;
+    }
+    if (records.some(x => x.id !== editId && x.name.toLowerCase() === name.toLowerCase())) {
+      alert(`Duplicate Record: A ${resource === "customers" ? "customer" : "vendor"} with this name already exists.`);
+      return;
+    }
+    if (phone && records.some(x => x.id !== editId && x.phone === phone)) {
+      alert(`Duplicate Record: A ${resource === "customers" ? "customer" : "vendor"} with this phone number already exists.`);
+      return;
+    }
     if (editId) {
-      await update(resource, editId, form);
+      await update(resource, editId, { ...form, name, phone, email, address });
       setEditId(null);
     } else {
-      await save(resource, form);
+      await save(resource, { ...form, name, phone, email, address });
     }
     setForm({ name: "", phone: "", email: "", address: "" });
   };
@@ -847,8 +1229,16 @@ function MasterView({ title, resource, records, save, remove, update }) {
     setForm({ name: record.name, phone: record.phone || "", email: record.email || "", address: record.address || "" });
   };
 
+  const subtitle = resource === "customers" 
+    ? "Customer Directory. Profiles of wholesale dealers, local distributors, and retail egg buyers. Tracks address info and direct contact details."
+    : "Vendor Directory. Contact book for feed suppliers, hatcheries, veterinary medicine suppliers, and equipment vendors.";
+
   return (
-    <CrudPanel title={editId ? `Edit ${title.slice(0, -1)}` : `New ${title.slice(0, -1)}`} button={editId ? `Update ${title.slice(0, -1)}` : `Save ${title.slice(0, -1)}`} onSubmit={handleSubmit}>
+    <>
+      <div className="page-description-banner">
+        <p><strong>{title}.</strong> {subtitle}</p>
+      </div>
+      <CrudPanel title={editId ? `Edit ${title.slice(0, -1)}` : `New ${title.slice(0, -1)}`} button={editId ? `Update ${title.slice(0, -1)}` : `Save ${title.slice(0, -1)}`} onSubmit={handleSubmit}>
       <Field label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Name" required /></Field>
       <Field label="Phone"><input type="tel" pattern="[0-9]{10}" title="10-digit phone number" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Phone number" /></Field>
       <Field label="Email"><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email address" /></Field>
@@ -858,9 +1248,10 @@ function MasterView({ title, resource, records, save, remove, update }) {
       <Records 
         headerRight={<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder={`Search ${title.toLowerCase()}...`} style={{ padding: '0.4rem 0.8rem', border: '1px solid #dfe5ee', borderRadius: '6px', width: '250px' }} />}
         cols={["Name", "Phone", "Email", "Address", ""]} 
-        rows={filteredRecords.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.phone}</td><td>{x.email}</td><td>{x.address}</td><td><div style={{display:'flex',gap:'0.5rem'}}><button className="btn" onClick={() => handleEdit(x)}>Edit</button><button className="btn btn-danger" onClick={() => remove(resource, x.id)}>Delete</button></div></td></tr>)} 
+        rows={filteredRecords.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.phone || "-"}</td><td>{x.email || "-"}</td><td>{x.address || "-"}</td><td><div style={{display:'flex',gap:'0.5rem',justifyContent:'center'}}><button className="btn" style={{ padding: '6px' }} onClick={() => handleEdit(x)}><Edit2 size={15} /></button><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove(resource, x.id)}><Trash2 size={15} /></button></div></td></tr>)} 
       />
     </CrudPanel>
+    </>
   );
 }
 
@@ -872,11 +1263,22 @@ function ItemsView({ data, save, remove, update }) {
   const filteredItems = data.items.filter(r => r.name?.toLowerCase().includes(search.toLowerCase()));
 
   const handleSubmit = async () => {
+    const name = form.name.trim();
+    const unit = form.unit.trim();
+    const price = String(form.price).trim();
+    if (!name || !unit || !price) {
+      alert("Please fill in all required fields.");
+      return;
+    }
+    if (data.items.some(x => x.id !== editId && x.name.toLowerCase() === name.toLowerCase())) {
+      alert("Duplicate Record: An item with this name already exists.");
+      return;
+    }
     if (editId) {
-      await update("items", editId, form);
+      await update("items", editId, { ...form, name, unit, price });
       setEditId(null);
     } else {
-      await save("items", form);
+      await save("items", { ...form, name, unit, price });
     }
     setForm({ name: "", unit: "kg", price: "" });
   };
@@ -887,7 +1289,11 @@ function ItemsView({ data, save, remove, update }) {
   };
 
   return (
-    <CrudPanel title={editId ? "Edit Item" : "New Item"} button={editId ? "Update Item" : "Save Item"} onSubmit={handleSubmit}>
+    <>
+      <div className="page-description-banner">
+        <p><strong>Product & Feed Inventory Items.</strong> Define standard items managed on the farm, their units (e.g. trays, bags, kg), and default selling prices.</p>
+      </div>
+      <CrudPanel title={editId ? "Edit Item" : "New Item"} button={editId ? "Update Item" : "Save Item"} onSubmit={handleSubmit}>
       <Field label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Item name" required /></Field>
       <Field label="Unit"><input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="e.g. kg, liters, tray" required /></Field>
       <Field label="Default Price"><input type="number" min="0" step="any" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="Default price" required /></Field>
@@ -896,20 +1302,54 @@ function ItemsView({ data, save, remove, update }) {
       <Records 
         headerRight={<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search items..." style={{ padding: '0.4rem 0.8rem', border: '1px solid #dfe5ee', borderRadius: '6px', width: '250px' }} />}
         cols={["Name", "Unit", "Default Price", ""]} 
-        rows={filteredItems.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.unit}</td><td>{money(x.price)}</td><td><div style={{display:'flex',gap:'0.5rem'}}><button className="btn" onClick={() => handleEdit(x)}>Edit</button><button className="btn btn-danger" onClick={() => remove("items", x.id)}>Delete</button></div></td></tr>)} 
+        rows={filteredItems.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.unit}</td><td>{money(x.price)}</td><td><div style={{display:'flex',gap:'0.5rem',justifyContent:'center'}}><button className="btn" style={{ padding: '6px' }} onClick={() => handleEdit(x)}><Edit2 size={15} /></button><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("items", x.id)}><Trash2 size={15} /></button></div></td></tr>)} 
       />
     </CrudPanel>
+    </>
   );
 }
 
-function ShedsView({ data, save, remove, userRole }) {
+function ShedsView({ data, save, remove, update, userRole }) {
   const [form, setForm] = useState({ name: "", capacity: "" });
+  const [editId, setEditId] = useState(null);
+
+  const handleShedSubmit = async () => {
+    const name = form.name.trim();
+    const capacity = String(form.capacity).trim();
+    if (!name || !capacity) {
+      alert("Please fill in all required fields.");
+      return;
+    }
+    if (data.sheds.some(x => x.id !== editId && x.name.toLowerCase() === name.toLowerCase())) {
+      alert("Duplicate Record: A shed with this name already exists.");
+      return;
+    }
+    if (editId) {
+      await update("sheds", editId, { ...form, name, capacity });
+      setEditId(null);
+    } else {
+      await save("sheds", { ...form, name, capacity });
+    }
+    setForm({ name: "", capacity: "" });
+  };
+
+  const handleEdit = (record) => {
+    setEditId(record.id);
+    setForm({ name: record.name, capacity: record.capacity });
+  };
+
   return (
-    <CrudPanel title="New Shed" button="Save Shed" onSubmit={() => save("sheds", form)}>
+    <>
+      <div className="page-description-banner">
+        <p><strong>Poultry Sheds.</strong> Add and monitor houses/sheds where batches of layers are kept, along with their maximum stocking capacities.</p>
+      </div>
+      <CrudPanel title={editId ? "Edit Shed" : "New Shed"} button={editId ? "Update Shed" : "Save Shed"} onSubmit={handleShedSubmit}>
       <Field label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Shed name" required /></Field>
       <Field label="Capacity"><input type="number" min="0" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} placeholder="Capacity" required /></Field>
-      <Records cols={userRole === "MANAGER" ? ["Name", "Capacity"] : ["Name", "Capacity", ""]} rows={data.sheds.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.capacity}</td>{userRole !== "MANAGER" && <td><button className="btn btn-danger" onClick={() => remove("sheds", x.id)}>Delete</button></td>}</tr>)} />
+      {editId && <Field label="Actions"><button type="button" className="btn" onClick={() => { setEditId(null); setForm({ name: "", capacity: "" }); }}>Cancel Edit</button></Field>}
+      <Records cols={userRole === "MANAGER" ? ["Name", "Capacity"] : ["Name", "Capacity", ""]} rows={data.sheds.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.capacity}</td>{userRole !== "MANAGER" && <td><div style={{display:'flex',gap:'0.5rem',justifyContent:'center'}}><button className="btn" style={{ padding: '6px' }} onClick={() => handleEdit(x)}><Edit2 size={15} /></button><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("sheds", x.id)}><Trash2 size={15} /></button></div></td>}</tr>)} />
     </CrudPanel>
+    </>
   );
 }
 
@@ -917,13 +1357,18 @@ function EggCollectionsView({ data, save, remove }) {
   const [form, setForm] = useState({ date: today(), shed_id: "", qty: "", notes: "" });
   const shed = data.sheds.find((x) => String(x.id) === String(form.shed_id));
   return (
-    <CrudPanel title="New Eggs Collection" button="Save Collection" onSubmit={() => save("egg_collections", { ...form, shed_name: shed?.name })}>
+    <>
+      <div className="page-description-banner">
+        <p><strong>Egg Collection Records.</strong> Daily log of eggs collected from various production sheds. Useful to monitor shed-wise performance and batch productivity.</p>
+      </div>
+      <CrudPanel title="New Eggs Collection" button="Save Collection" onSubmit={() => save("egg_collections", { ...form, shed_name: shed?.name })}>
       <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></Field>
       <Field label="Shed"><select value={form.shed_id} onChange={(e) => setForm({ ...form, shed_id: e.target.value })} required><option value="">Select Shed</option>{data.sheds.map((x) => <option value={x.id} key={x.id}>{x.name}</option>)}</select></Field>
       <Field label="Quantity"><input type="number" min="0" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} placeholder="Eggs collected" required /></Field>
       <Field label="Notes"><input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes" /></Field>
-      <Records cols={["Date", "Shed", "Quantity", "Notes", ""]} rows={data.egg_collections.map((x) => <tr key={x.id}><td>{x.date}</td><td>{x.shed_name}</td><td>{x.qty}</td><td>{x.notes}</td><td><button className="btn btn-danger" onClick={() => remove("egg_collections", x.id)}>Delete</button></td></tr>)} />
+      <Records cols={["Date", "Shed", "Quantity", "Notes", ""]} rows={data.egg_collections.map((x) => <tr key={x.id}><td>{formatIST(x.date)}</td><td>{x.shed_name}</td><td>{x.qty}</td><td>{x.notes || "-"}</td><td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("egg_collections", x.id)}><Trash2 size={15} /></button></td></tr>)} />
     </CrudPanel>
+    </>
   );
 }
 
@@ -1004,11 +1449,16 @@ function ReportsView({ totals: defaultTotals, chartData, data }) {
 
   return (
     <>
-      <div className="filter-bar" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginBottom: '1.5rem', alignItems: 'center' }}>
-        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>From:</label>
-        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
-        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>To:</label>
-        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
+      <div className="page-description-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', padding: '12px 20px' }}>
+        <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)", fontWeight: "500", flex: 1, minWidth: '300px' }}>
+          <strong>Financial Reports & Analytics.</strong> Filter sales, purchases, and daybook transactions by date ranges to analyze profits, cash flows, and customer/vendor volumes.
+        </p>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <span style={{ fontSize: '13px', color: '#526b5c', fontWeight: '600' }}>From:</span>
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: '2px 8px', height: '28px', fontSize: '12px', border: '1px solid var(--line-strong)', borderRadius: '6px', color: 'var(--text)', background: '#ffffff', outline: 'none' }} />
+          <span style={{ fontSize: '13px', color: '#526b5c', fontWeight: '600' }}>To:</span>
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: '2px 8px', height: '28px', fontSize: '12px', border: '1px solid var(--line-strong)', borderRadius: '6px', color: 'var(--text)', background: '#ffffff', outline: 'none' }} />
+        </div>
       </div>
       <section className="metric-grid super-grid">
         <MetricCard label="Income" value={money(totals.income)} tone="green" />
@@ -1025,17 +1475,17 @@ function ReportsView({ totals: defaultTotals, chartData, data }) {
   );
 }
 
-function CrudPanel({ title, button, onSubmit, children }) {
+function CrudPanel({ title, subtitle = "Enter the details and save the record.", button, onSubmit, children }) {
   const kids = Array.isArray(children) ? children : [children];
   const records = kids.find((child) => child?.type === Records);
   const fields = kids.filter((child) => child?.type !== Records);
   return (
     <>
       <section className="panel form-panel">
-        <div className="panel-heading"><h2>{title}</h2><p>Enter the details and save the record.</p></div>
+        <div className="panel-heading"><h2>{title}</h2><p>{subtitle}</p></div>
         <form onSubmit={(e) => { e.preventDefault(); onSubmit(); }}>
           <div className="erp-form-grid">{fields}</div>
-          <button className="primary-btn" type="submit"><Plus size={17} />{button}</button>
+          {button && <button className="primary-btn" type="submit"><Plus size={17} />{button}</button>}
         </form>
       </section>
       {records}
@@ -1056,14 +1506,19 @@ function SystemUsersView({ data, save, remove }) {
   const [form, setForm] = useState({ full_name: "", email: "", phone: "", role: "MANAGER", password: "" });
 
   return (
-    <CrudPanel title="New System User" button="Create User" onSubmit={() => save("users", form)}>
+    <>
+      <div className="page-description-banner">
+        <p><strong>System Users & Access Control.</strong> Manage login credentials and assign manager or admin permissions to farm supervisors.</p>
+      </div>
+      <CrudPanel title="New System User" button="Create User" onSubmit={() => save("users", form)}>
       <Field label="Full Name"><input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} placeholder="Full name" required /></Field>
       <Field label="Email"><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email address" required /></Field>
       <Field label="Phone"><input type="tel" pattern="[0-9]{10}" title="10-digit phone number" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Phone number" /></Field>
       <Field label="Role"><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} required><option value="MANAGER">Manager</option><option value="ADMIN">Admin</option></select></Field>
       <Field label="Password"><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Password" required minLength={6} /></Field>
-      <Records cols={["Name", "Email", "Role", ""]} rows={data.users.map((x) => <tr key={x.id}><td>{x.full_name}</td><td>{x.email}</td><td><span className="badge badge-green">{x.role}</span></td><td><button className="btn btn-danger" onClick={() => remove("users", x.id)}>Revoke</button></td></tr>)} />
+      <Records cols={["Name", "Email", "Role", ""]} rows={data.users.map((x) => <tr key={x.id}><td>{x.full_name}</td><td>{x.email}</td><td><span className="badge badge-green">{x.role}</span></td><td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("users", x.id)}><UserMinus size={15} /></button></td></tr>)} />
     </CrudPanel>
+    </>
   );
 }
 
@@ -1086,11 +1541,16 @@ function EggReportsView({ data }) {
 
   return (
     <>
-      <div className="filter-bar" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginBottom: '1.5rem', alignItems: 'center' }}>
-        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>From:</label>
-        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
-        <label style={{ fontSize: '0.85rem', color: '#4f5e7b', fontWeight: '500' }}>To:</label>
-        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: '0.4rem 0.6rem', border: '1px solid #dfe5ee', borderRadius: '6px', color: '#101623' }} />
+      <div className="page-description-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', padding: '12px 20px' }}>
+        <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)", fontWeight: "500", flex: 1, minWidth: '300px' }}>
+          <strong>Egg Production Analytics.</strong> View total egg production trends over time, compare output across different sheds, and locate top-performing areas.
+        </p>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <span style={{ fontSize: '13px', color: '#526b5c', fontWeight: '600' }}>From:</span>
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ padding: '2px 8px', height: '28px', fontSize: '12px', border: '1px solid var(--line-strong)', borderRadius: '6px', color: 'var(--text)', background: '#ffffff', outline: 'none' }} />
+          <span style={{ fontSize: '13px', color: '#526b5c', fontWeight: '600' }}>To:</span>
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ padding: '2px 8px', height: '28px', fontSize: '12px', border: '1px solid var(--line-strong)', borderRadius: '6px', color: 'var(--text)', background: '#ffffff', outline: 'none' }} />
+        </div>
       </div>
       <section className="metric-grid super-grid">
         <MetricCard label="Total Eggs Collected" value={totalEggs} tone="purple" />
