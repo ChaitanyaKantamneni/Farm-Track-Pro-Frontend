@@ -1,135 +1,161 @@
 import { useEffect, useState } from "react";
 import {
   Plus,
-  Search
+  Search,
+  Upload
 } from "lucide-react";
 
 import {
   createTenant,
-  getTenants
-}
-from "../services/tenantService";
+  getTenants,
+  updateTenantLogo
+} from "../services/tenantService";
 
 import AppShell from "../components/AppShell";
 import "../styles/tenants.css";
 
 function Tenants() {
+  const [tenants, setTenants] = useState([]);
+  const [tenantLogos, setTenantLogos] = useState(() => {
+    return JSON.parse(localStorage.getItem("tenant_logos") || "{}");
+  });
 
-  const [tenants, setTenants] =
-  useState([]);
-
-  const [form, setForm] =
-  useState({
-
+  const [logo, setLogo] = useState("");
+  const [form, setForm] = useState({
     tenant_code: "",
     farm_name: "",
     owner_name: "",
     phone: "",
     email: "",
-
     admin_name: "",
     admin_email: "",
     admin_phone: ""
-
   });
 
   useEffect(() => {
-
     loadTenants();
-
   }, []);
 
-  const loadTenants =
-  async () => {
-
+  const loadTenants = async () => {
     try {
-
-      const response =
-      await getTenants();
-
-      setTenants(
-        response.data
-      );
-
-    }
-    catch(error){
-
+      const response = await getTenants();
+      setTenants(response.data);
+      
+      const logosMap = {};
+      response.data.forEach(t => {
+        if (t.logo) {
+          logosMap[t.id] = t.logo;
+        }
+      });
+      setTenantLogos(logosMap);
+      localStorage.setItem("tenant_logos", JSON.stringify(logosMap));
+    } catch (error) {
       console.log(error);
+    }
+  };
 
+  const handleChange = (e) => {
+    setForm({
+      ...form,
+      [e.target.name]: e.target.value
+    });
+  };
+
+  const handleLogoUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setLogo(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleUploadForExisting = async (tenantId, e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      try {
+        const base64Logo = reader.result;
+        await updateTenantLogo(tenantId, base64Logo);
+        setTenantLogos(prev => {
+          const next = { ...prev, [tenantId]: base64Logo };
+          localStorage.setItem("tenant_logos", JSON.stringify(next));
+          return next;
+        });
+      } catch (err) {
+        alert("Error saving logo to database");
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveLogo = async (tenantId) => {
+    if (!confirm("Are you sure you want to remove this tenant logo?")) return;
+    try {
+      await updateTenantLogo(tenantId, null);
+      setTenantLogos(prev => {
+        const next = { ...prev };
+        delete next[tenantId];
+        localStorage.setItem("tenant_logos", JSON.stringify(next));
+        return next;
+      });
+    } catch (err) {
+      alert("Error removing logo");
+    }
+  };
+
+  const saveTenant = async () => {
+    if (!form.farm_name || !form.farm_name.trim()) {
+      alert("Farm Name is required");
+      return;
+    }
+    if (!form.admin_name || !form.admin_name.trim()) {
+      alert("Admin Name is required");
+      return;
+    }
+    if (!form.admin_email || !form.admin_email.trim()) {
+      alert("Admin Email is required");
+      return;
     }
 
-  };
-
-  const handleChange =
-  (e) => {
-
-    setForm({
-
-      ...form,
-
-      [e.target.name]:
-      e.target.value
-
-    });
-
-  };
-
-  const saveTenant =
-  async () => {
-
     try {
-
-      const response =
-      await createTenant(
-        form
-      );
+      const response = await createTenant({ ...form, logo });
+      const newTenantId = response.data?.tenant?.id || response.data?.id || response.data?.tenantId;
+      if (newTenantId && logo) {
+        setTenantLogos(prev => {
+          const next = { ...prev, [newTenantId]: logo };
+          localStorage.setItem("tenant_logos", JSON.stringify(next));
+          return next;
+        });
+      }
+      setLogo("");
 
       alert(
-
-`Tenant Created Successfully
-
-Admin Email:
-${response.data.credentials.email}
-
-Password:
-${response.data.credentials.password}`
-
+        `Tenant Created Successfully\n\nAdmin Email:\n${response.data.credentials.email}\n\nPassword:\n${response.data.credentials.password}`
       );
 
       setForm({
-
         tenant_code: "",
         farm_name: "",
         owner_name: "",
         phone: "",
         email: "",
-
         admin_name: "",
         admin_email: "",
         admin_phone: ""
-
       });
 
       loadTenants();
-
-    }
-    catch(error){
-
+    } catch (error) {
       console.log(error);
-
-      alert(
-        error.response?.data?.message
-      );
-
+      alert(error.response?.data?.message || "Error creating tenant");
     }
-
   };
 
   return (
-    <AppShell
-      title="Tenant Management"
-      variant="super"
-    >
+    <AppShell title="Tenant Management" variant="super">
       <div className="tenant-grid">
         <section className="panel tenant-form-card">
           <div className="panel-heading">
@@ -147,9 +173,10 @@ ${response.data.credentials.password}`
 
             <input
               name="farm_name"
-              placeholder="Farm Name"
+              placeholder="Farm Name *"
               value={form.farm_name}
               onChange={handleChange}
+              required
             />
 
             <input
@@ -173,20 +200,37 @@ ${response.data.credentials.password}`
               onChange={handleChange}
             />
 
+            <div className="form-field">
+              <span style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: '600', marginBottom: '4px' }}>Farm Brand Logo</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleLogoUpload}
+                style={{ width: '100%', padding: '8px 12px', border: '1.5px solid var(--line-strong)', borderRadius: '8px', background: '#f8fafc', fontSize: '12px', height: 'auto' }}
+              />
+              {logo && (
+                <div style={{ marginTop: '10px' }}>
+                  <img src={logo} alt="Preview" style={{ height: '40px', objectFit: 'contain', borderRadius: '4px', border: '1px solid var(--line)' }} />
+                </div>
+              )}
+            </div>
+
             <div className="form-divider" />
 
             <input
               name="admin_name"
-              placeholder="Admin Name"
+              placeholder="Admin Name *"
               value={form.admin_name}
               onChange={handleChange}
+              required
             />
 
             <input
               name="admin_email"
-              placeholder="Admin Email"
+              placeholder="Admin Email *"
               value={form.admin_email}
               onChange={handleChange}
+              required
             />
 
             <input
@@ -223,6 +267,7 @@ ${response.data.credentials.password}`
             <table>
               <thead>
                 <tr>
+                  <th>Logo</th>
                   <th>ID</th>
                   <th>Code</th>
                   <th>Farm</th>
@@ -232,36 +277,54 @@ ${response.data.credentials.password}`
               </thead>
 
               <tbody>
-                {
-                  tenants.map(
-                    (tenant) => (
-                      <tr key={tenant.id}>
-                        <td>{tenant.id}</td>
-                        <td>{tenant.tenant_code}</td>
-                        <td>{tenant.farm_name}</td>
-                        <td>{tenant.owner_name}</td>
-                        <td>
-                          <span className={
-                            tenant.status === "ACTIVE"
-                              ? "active-badge"
-                              : "inactive-badge"
-                          }
+                {tenants.map((tenant) => (
+                  <tr key={tenant.id}>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        {tenantLogos[tenant.id] ? (
+                          <img src={tenantLogos[tenant.id]} alt="Logo" style={{ height: '28px', width: '28px', objectFit: 'contain', borderRadius: '4px', border: '1px solid var(--line-strong)' }} />
+                        ) : (
+                          <div style={{ width: '28px', height: '28px', background: 'var(--surface-soft)', borderRadius: '4px', display: 'grid', placeItems: 'center', fontSize: '10px', color: 'var(--blue)', fontWeight: 'bold', border: '1px solid var(--line-strong)' }}>FT</div>
+                        )}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          id={`upload-${tenant.id}`}
+                          style={{ display: 'none' }}
+                          onChange={(e) => handleUploadForExisting(tenant.id, e)}
+                        />
+                        <label htmlFor={`upload-${tenant.id}`} style={{ fontSize: '11px', color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Upload size={12} /> Change
+                        </label>
+                        {tenantLogos[tenant.id] && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveLogo(tenant.id)}
+                            style={{ border: 'none', background: 'none', fontSize: '11px', color: 'var(--red)', cursor: 'pointer', textDecoration: 'underline', padding: 0, display: 'flex', alignItems: 'center' }}
                           >
-                            {tenant.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                }
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                    <td>{tenant.id}</td>
+                    <td><code>{tenant.tenant_code}</code></td>
+                    <td>{tenant.farm_name}</td>
+                    <td>{tenant.owner_name}</td>
+                    <td>
+                      <span className={tenant.status === "ACTIVE" ? "active-badge" : "inactive-badge"}>
+                        {tenant.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </section>
       </div>
     </AppShell>
-
   );
-
 }
 
 export default Tenants;
