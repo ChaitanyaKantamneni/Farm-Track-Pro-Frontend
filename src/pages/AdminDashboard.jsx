@@ -718,8 +718,9 @@ function DisposalReportsView({ data }) {
     let minDate = "9999-12-31";
     let maxDate = "0000-01-01";
     filteredDisposals.forEach(x => {
-      if (x.disposal_date < minDate) minDate = x.disposal_date;
-      if (x.disposal_date > maxDate) maxDate = x.disposal_date;
+      const dStr = typeof x.disposal_date === 'string' ? x.disposal_date.slice(0, 10) : new Date(x.disposal_date).toISOString().slice(0, 10);
+      if (dStr < minDate) minDate = dStr;
+      if (dStr > maxDate) maxDate = dStr;
     });
 
     const start = fromDate ? new Date(fromDate) : new Date(minDate);
@@ -728,13 +729,17 @@ function DisposalReportsView({ data }) {
 
     const map = {};
     filteredDisposals.forEach(d => {
-      const dateKey = diffDays <= 60 ? d.disposal_date : d.disposal_date.slice(0, 7);
+      const dStr = typeof d.disposal_date === 'string' ? d.disposal_date : new Date(d.disposal_date).toISOString();
+      const dateKey = diffDays <= 60 ? dStr.slice(0, 10) : dStr.slice(0, 7);
       map[dateKey] ||= { key: dateKey, loss: 0 };
       map[dateKey].loss += num(d.total_loss);
     });
 
     return Object.values(map).sort((a, b) => a.key.localeCompare(b.key)).map(x => {
-      const d = new Date(x.key + (diffDays <= 60 ? "" : "-01"));
+      const parts = x.key.split("-");
+      const d = diffDays <= 60 
+        ? new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+        : new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
       return {
         label: diffDays <= 60 ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
         "Financial Loss": x.loss
@@ -1415,7 +1420,7 @@ function ReportsView({ totals: defaultTotals, chartData, data }) {
 
     let minDate = "9999-12-31";
     let maxDate = "0000-01-01";
-    const checkDate = (d) => { if(d) { if(d < minDate) minDate = d; if(d > maxDate) maxDate = d; } };
+    const checkDate = (d) => { if(d) { const dStr = typeof d === 'string' ? d.slice(0, 10) : new Date(d).toISOString().slice(0, 10); if(dStr < minDate) minDate = dStr; if(dStr > maxDate) maxDate = dStr; } };
     
     filteredSales.forEach(x => checkDate(x.date));
     filteredPurchases.forEach(x => checkDate(x.date));
@@ -1427,7 +1432,8 @@ function ReportsView({ totals: defaultTotals, chartData, data }) {
     const map = {};
     const add = (date, key, val) => {
       if (!date) return;
-      const l = diffDays <= 60 ? date : date.slice(0, 7);
+      const dStr = typeof date === 'string' ? date : new Date(date).toISOString();
+      const l = diffDays <= 60 ? dStr.slice(0, 10) : dStr.slice(0, 7);
       map[l] ||= { key: l, income: 0, expenses: 0 };
       map[l][key] += num(val);
     };
@@ -1438,14 +1444,18 @@ function ReportsView({ totals: defaultTotals, chartData, data }) {
     filteredDaybook.filter(x => x.kind === 'expense').forEach(x => add(x.date, 'expenses', x.amount));
 
     return Object.values(map).sort((a, b) => a.key.localeCompare(b.key)).map(x => {
-       const d = new Date(x.key + (diffDays <= 60 ? "" : "-01"));
+       const parts = x.key.split("-");
+       const d = diffDays <= 60 
+         ? new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+         : new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
        return {
          label: diffDays <= 60 ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
          income: x.income,
          expenses: x.expenses
        };
-    });
+     });
   }, [filteredSales, filteredPurchases, filteredDaybook, chartData, fromDate, toDate]);
+
 
   return (
     <>
