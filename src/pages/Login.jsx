@@ -21,6 +21,9 @@ function Login() {
   const [password, setPassword] =
     useState("");
 
+  const [showPassword, setShowPassword] =
+    useState(false);
+
   const [loading, setLoading] =
     useState(false);
 
@@ -161,12 +164,23 @@ function Login() {
 
         <div className="input-group">
 
-          <label className="input-label">
-            Password
-          </label>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <label className="input-label" style={{ margin: 0 }}>
+              Password
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#6b7280', cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={showPassword}
+                onChange={() => setShowPassword(!showPassword)}
+                style={{ width: '13px', height: '13px', cursor: 'pointer' }}
+              />
+              Show Password
+            </label>
+          </div>
 
           <input
-            type="password"
+            type={showPassword ? "text" : "password"}
             className="login-input"
             placeholder="Enter password"
             value={password}

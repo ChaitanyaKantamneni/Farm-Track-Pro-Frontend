@@ -39,3 +39,13 @@ export const updateTenantSubscription = (id, data) =>
  */
 export const getPlatformStats = () =>
   apiClient.get("/tenants/platform-stats");
+
+/**
+ * Modifies target tenant info and optional admin password.
+ * @param {string|number} id - Target tenant ID.
+ * @param {Object} data - Tenant fields.
+ * @returns {Promise} Axios promise.
+ */
+export const updateTenantDetails = (id, data) =>
+  apiClient.put(`/tenants/${id}`, data);
+

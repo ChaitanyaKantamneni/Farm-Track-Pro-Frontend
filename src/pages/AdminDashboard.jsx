@@ -375,7 +375,7 @@ function AdminDashboard() {
         />
       )}
       {!loading && active === "settings" && <SettingsView settings={data.settings} updateSettings={updateSettings} reload={load} />}
-      {!loading && active === "users" && <SystemUsersView data={data} save={save} remove={remove} />}
+      {!loading && active === "users" && <SystemUsersView data={data} save={save} update={update} remove={remove} />}
     </AppShell>
   );
 }
@@ -1512,22 +1512,88 @@ function Records({ cols, rows, headerRight }) {
   );
 }
 
-function SystemUsersView({ data, save, remove }) {
+function SystemUsersView({ data, save, update, remove }) {
   const [form, setForm] = useState({ full_name: "", email: "", phone: "", role: "MANAGER", password: "" });
+  const [editingId, setEditingId] = useState(null);
+
+  const startEdit = (user) => {
+    setEditingId(user.id);
+    setForm({
+      full_name: user.full_name || "",
+      email: user.email || "",
+      phone: user.phone || "",
+      role: user.role || "MANAGER",
+      password: ""
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setForm({ full_name: "", email: "", phone: "", role: "MANAGER", password: "" });
+  };
+
+  const handleSubmit = async () => {
+    if (editingId) {
+      const payload = { ...form };
+      if (!payload.password) {
+        delete payload.password;
+      }
+      await update("users", editingId, payload);
+      setEditingId(null);
+    } else {
+      await save("users", form);
+    }
+    setForm({ full_name: "", email: "", phone: "", role: "MANAGER", password: "" });
+  };
 
   return (
     <>
       <div className="page-description-banner">
         <p><strong>System Users & Access Control.</strong> Manage login credentials and assign manager or admin permissions to farm supervisors.</p>
       </div>
-      <CrudPanel title="New System User" button="Create User" onSubmit={() => save("users", form)}>
-      <Field label="Full Name"><input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} placeholder="Full name" required /></Field>
-      <Field label="Email"><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email address" required /></Field>
-      <Field label="Phone"><input type="tel" pattern="[0-9]{10}" title="10-digit phone number" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Phone number" /></Field>
-      <Field label="Role"><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} required><option value="MANAGER">Manager</option><option value="ADMIN">Admin</option></select></Field>
-      <Field label="Password"><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Password" required minLength={6} /></Field>
-      <Records cols={["Name", "Email", "Role", ""]} rows={data.users.map((x) => <tr key={x.id}><td>{x.full_name}</td><td>{x.email}</td><td><span className="badge badge-green">{x.role}</span></td><td><button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("users", x.id)}><UserMinus size={15} /></button></td></tr>)} />
-    </CrudPanel>
+      <CrudPanel 
+        title={editingId ? "Edit System User" : "New System User"} 
+        button={editingId ? "Save Changes" : "Create User"} 
+        onSubmit={handleSubmit}
+        subtitle={editingId ? "Modify user details or enter a new password to reset it." : "Enter the details and save the record."}
+      >
+        <Field label="Full Name"><input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} placeholder="Full name" required /></Field>
+        <Field label="Email"><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email address" required /></Field>
+        <Field label="Phone"><input type="tel" pattern="[0-9]{10}" title="10-digit phone number" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Phone number" /></Field>
+        <Field label="Role"><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} required><option value="MANAGER">Manager</option><option value="ADMIN">Admin</option></select></Field>
+        <Field label={editingId ? "New Password (Leave blank to keep current)" : "Password"}><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder={editingId ? "New Password" : "Password"} required={!editingId} minLength={6} /></Field>
+        
+        {editingId ? (
+          <Field label="Actions">
+            <button type="button" className="btn btn-secondary" style={{ width: '100%', height: '38px', borderRadius: '8px', border: '1px solid var(--line-strong)', cursor: 'pointer', background: '#f1f5f9', fontWeight: '600', fontSize: '13px' }} onClick={cancelEdit}>
+              Cancel Edit
+            </button>
+          </Field>
+        ) : <div style={{ display: 'none' }} />}
+
+        <Records cols={["Name", "Email", "Role", "Password", "Actions"]} rows={data.users.map((x) => (
+          <tr key={x.id}>
+            <td>{x.full_name}</td>
+            <td>{x.email}</td>
+            <td><span className="badge badge-green">{x.role}</span></td>
+            <td>
+              <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', fontSize: '12px' }}>
+                {x.plain_password || "N/A"}
+              </code>
+            </td>
+            <td>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                <button className="btn btn-primary" style={{ padding: '6px' }} onClick={() => startEdit(x)}>
+                  <Edit2 size={15} />
+                </button>
+                <button className="btn btn-danger" style={{ padding: '6px' }} onClick={() => remove("users", x.id)}>
+                  <UserMinus size={15} />
+                </button>
+              </div>
+            </td>
+          </tr>
+        ))} />
+      </CrudPanel>
     </>
   );
 }
