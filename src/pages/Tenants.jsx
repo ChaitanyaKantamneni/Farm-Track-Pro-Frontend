@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import {
   Plus,
   Search,
-  Upload
+  Upload,
+  Edit2
 } from "lucide-react";
 
 import {
   createTenant,
   getTenants,
-  updateTenantLogo
+  updateTenantLogo,
+  updateTenantDetails
 } from "../services/tenantService";
 
 import AppShell from "../components/AppShell";
@@ -16,10 +18,12 @@ import "../styles/tenants.css";
 
 function Tenants() {
   const [tenants, setTenants] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const [tenantLogos, setTenantLogos] = useState(() => {
     return JSON.parse(localStorage.getItem("tenant_logos") || "{}");
   });
 
+  const [editingId, setEditingId] = useState(null);
   const [logo, setLogo] = useState("");
   const [form, setForm] = useState({
     tenant_code: "",
@@ -29,7 +33,8 @@ function Tenants() {
     email: "",
     admin_name: "",
     admin_email: "",
-    admin_phone: ""
+    admin_phone: "",
+    admin_password: ""
   });
 
   useEffect(() => {
@@ -58,6 +63,36 @@ function Tenants() {
     setForm({
       ...form,
       [e.target.name]: e.target.value
+    });
+  };
+
+  const startEdit = (tenant) => {
+    setEditingId(tenant.id);
+    setForm({
+      tenant_code: tenant.tenant_code || "",
+      farm_name: tenant.farm_name || "",
+      owner_name: tenant.owner_name || "",
+      phone: tenant.phone || "",
+      email: tenant.email || "",
+      admin_name: tenant.admin_name || "",
+      admin_email: tenant.admin_email || "",
+      admin_phone: tenant.admin_phone || "",
+      admin_password: "" // Optional: leave blank to keep current password
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setForm({
+      tenant_code: "",
+      farm_name: "",
+      owner_name: "",
+      phone: "",
+      email: "",
+      admin_name: "",
+      admin_email: "",
+      admin_phone: "",
+      admin_password: ""
     });
   };
 
@@ -121,36 +156,47 @@ function Tenants() {
     }
 
     try {
-      const response = await createTenant({ ...form, logo });
-      const newTenantId = response.data?.tenant?.id || response.data?.id || response.data?.tenantId;
-      if (newTenantId && logo) {
-        setTenantLogos(prev => {
-          const next = { ...prev, [newTenantId]: logo };
-          localStorage.setItem("tenant_logos", JSON.stringify(next));
-          return next;
+      if (editingId) {
+        const payload = { ...form };
+        if (!payload.admin_password) {
+          delete payload.admin_password;
+        }
+        await updateTenantDetails(editingId, payload);
+        alert("Tenant details updated successfully");
+        cancelEdit();
+      } else {
+        const response = await createTenant({ ...form, logo });
+        const newTenantId = response.data?.tenant?.id || response.data?.id || response.data?.tenantId;
+        if (newTenantId && logo) {
+          setTenantLogos(prev => {
+            const next = { ...prev, [newTenantId]: logo };
+            localStorage.setItem("tenant_logos", JSON.stringify(next));
+            return next;
+          });
+        }
+        setLogo("");
+
+        alert(
+          `Tenant Created Successfully\n\nAdmin Email:\n${response.data.credentials.email}\n\nPassword:\n${response.data.credentials.password}`
+        );
+
+        setForm({
+          tenant_code: "",
+          farm_name: "",
+          owner_name: "",
+          phone: "",
+          email: "",
+          admin_name: "",
+          admin_email: "",
+          admin_phone: "",
+          admin_password: ""
         });
       }
-      setLogo("");
-
-      alert(
-        `Tenant Created Successfully\n\nAdmin Email:\n${response.data.credentials.email}\n\nPassword:\n${response.data.credentials.password}`
-      );
-
-      setForm({
-        tenant_code: "",
-        farm_name: "",
-        owner_name: "",
-        phone: "",
-        email: "",
-        admin_name: "",
-        admin_email: "",
-        admin_phone: ""
-      });
 
       loadTenants();
     } catch (error) {
       console.log(error);
-      alert(error.response?.data?.message || "Error creating tenant");
+      alert(error.response?.data?.message || "Error saving tenant");
     }
   };
 
@@ -159,8 +205,8 @@ function Tenants() {
       <div className="tenant-grid">
         <section className="panel tenant-form-card">
           <div className="panel-heading">
-            <h2>Create Tenant</h2>
-            <p>Farm details and first admin account</p>
+            <h2>{editingId ? "Edit Tenant" : "Create Tenant"}</h2>
+            <p>{editingId ? "Modify details or reset admin password" : "Farm details and first admin account"}</p>
           </div>
 
           <div className="form-grid">
@@ -240,14 +286,38 @@ function Tenants() {
               onChange={handleChange}
             />
 
+            {editingId && (
+              <input
+                name="admin_password"
+                type="password"
+                placeholder="New Password (Leave blank to keep current)"
+                value={form.admin_password}
+                onChange={handleChange}
+                style={{ border: '1.5px solid var(--blue-light, #0284c7)' }}
+              />
+            )}
+
             <button
               className="primary-btn"
               type="button"
               onClick={saveTenant}
             >
-              <Plus size={17} />
-              Create Tenant
+              {editingId ? "Save Changes" : <>
+                <Plus size={17} />
+                Create Tenant
+              </>}
             </button>
+
+            {editingId && (
+              <button
+                className="secondary-btn"
+                type="button"
+                onClick={cancelEdit}
+                style={{ width: '100%', minHeight: '38px', height: '38px', borderRadius: '8px', border: '1.5px solid var(--line-strong)', background: '#f1f5f9', color: 'var(--text)', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}
+              >
+                Cancel Edit
+              </button>
+            )}
           </div>
         </section>
 
@@ -259,7 +329,13 @@ function Tenants() {
             </div>
             <div className="search-box">
               <Search size={16} />
-              <span>Search tenants</span>
+              <input
+                type="text"
+                placeholder="Search tenants..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '13px', width: '100%' }}
+              />
             </div>
           </div>
 
@@ -272,12 +348,19 @@ function Tenants() {
                   <th>Code</th>
                   <th>Farm</th>
                   <th>Owner</th>
+                  <th>Admin Password</th>
                   <th>Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
 
               <tbody>
-                {tenants.map((tenant) => (
+                {tenants.filter(t => 
+                  t.farm_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  t.tenant_code?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  t.owner_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  t.email?.toLowerCase().includes(searchQuery.toLowerCase())
+                ).map((tenant) => (
                   <tr key={tenant.id}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -312,9 +395,24 @@ function Tenants() {
                     <td>{tenant.farm_name}</td>
                     <td>{tenant.owner_name}</td>
                     <td>
+                      <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', fontSize: '12px' }}>
+                        {tenant.admin_password || "N/A"}
+                      </code>
+                    </td>
+                    <td>
                       <span className={tenant.status === "ACTIVE" ? "active-badge" : "inactive-badge"}>
                         {tenant.status}
                       </span>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="primary-btn"
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px', height: '28px', minHeight: '28px', fontSize: '12px', cursor: 'pointer' }}
+                        onClick={() => startEdit(tenant)}
+                      >
+                        <Edit2 size={13} /> Edit
+                      </button>
                     </td>
                   </tr>
                 ))}
